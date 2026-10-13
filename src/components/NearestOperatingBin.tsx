@@ -12,12 +12,16 @@ interface NearestOperatingBinProps {
   rvm: RVM | null;
   userLocation: UserLocation | null;
   onFocusOnMap: (rvm: RVM) => void;
+  isCustomSelected?: boolean;
+  onResetToNearest?: () => void;
 }
 
 export const NearestOperatingBin: React.FC<NearestOperatingBinProps> = ({
   rvm,
   userLocation,
   onFocusOnMap,
+  isCustomSelected = false,
+  onResetToNearest,
 }) => {
   if (!rvm) {
     return (
@@ -45,10 +49,27 @@ export const NearestOperatingBin: React.FC<NearestOperatingBinProps> = ({
         <div className="min-w-0 flex-1">
           {/* Header Row: Badge & Location Name */}
           <div className="flex items-center gap-1.5 flex-wrap">
-            <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md bg-emerald-500/15 text-emerald-400 border border-emerald-500/30 text-[10px] font-black uppercase tracking-wider shrink-0">
-              <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span>
-              #1 Nearest In Operation
-            </span>
+            {isCustomSelected ? (
+              <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md bg-blue-500/20 text-blue-300 border border-blue-500/40 text-[10px] font-black uppercase tracking-wider shrink-0">
+                <span className="w-1.5 h-1.5 rounded-full bg-blue-400 animate-pulse"></span>
+                Selected Target
+              </span>
+            ) : (
+              <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md bg-emerald-500/15 text-emerald-400 border border-emerald-500/30 text-[10px] font-black uppercase tracking-wider shrink-0">
+                <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span>
+                #1 Nearest In Operation
+              </span>
+            )}
+
+            {isCustomSelected && onResetToNearest && (
+              <button
+                type="button"
+                onClick={onResetToNearest}
+                className="text-[10px] font-semibold text-slate-400 hover:text-white underline cursor-pointer"
+              >
+                Reset to #1
+              </button>
+            )}
 
             <button
               type="button"
@@ -56,7 +77,7 @@ export const NearestOperatingBin: React.FC<NearestOperatingBinProps> = ({
               title="Focus on map"
               className="inline-flex items-center gap-0.5 text-[11px] text-slate-400 hover:text-emerald-300 transition-colors cursor-pointer ml-auto sm:ml-0"
             >
-              <Compass className="w-3 h-3" />
+              <Compass className="w-3.5 h-3.5" />
               <span>Show on map</span>
             </button>
           </div>

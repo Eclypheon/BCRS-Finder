@@ -27,7 +27,8 @@ export const App: React.FC = () => {
   const [isLoadingLocation, setIsLoadingLocation] = useState(false);
   const [isLoadingPostal, setIsLoadingPostal] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
-  const [selectedRVM, setSelectedRVM] = useState<RVM | null>(null);
+  const [routedRVM, setRoutedRVM] = useState<RVM | null>(null);
+  const [modalRVM, setModalRVM] = useState<RVM | null>(null);
   const [focusedRVM, setFocusedRVM] = useState<RVM | null>(null);
   const [isOnline, setIsOnline] = useState(navigator.onLine);
 
@@ -276,11 +277,16 @@ export const App: React.FC = () => {
             onClearError={() => setErrorMessage(null)}
           />
 
-          {/* 2. #1 Nearest In-Operation Bin with Instant 1-Click Navigation Icons */}
+          {/* 2. Target Operating Bin with Instant 1-Click Navigation Icons */}
           <NearestOperatingBin
-            rvm={nearestOperatingRVM}
+            rvm={routedRVM || nearestOperatingRVM}
             userLocation={userLocation}
-            onFocusOnMap={handleFocusRVMOnMap}
+            onFocusOnMap={(rvm) => {
+              setFocusedRVM(rvm);
+              setRoutedRVM(rvm);
+            }}
+            isCustomSelected={Boolean(routedRVM && routedRVM.id !== nearestOperatingRVM?.id)}
+            onResetToNearest={() => setRoutedRVM(null)}
           />
         </div>
 
@@ -291,10 +297,19 @@ export const App: React.FC = () => {
             <MapView
               userLocation={userLocation}
               rvms={rvmsWithDistance}
-              onSelectRVM={(rvm) => setSelectedRVM(rvm)}
+              onSelectRVM={(rvm) => {
+                const currentTargetId = (routedRVM || nearestOperatingRVM)?.id;
+                if (currentTargetId === rvm.id) {
+                  // Second tap on the same dot -> open details & navigation modal!
+                  setModalRVM(rvm);
+                } else {
+                  // First tap on this dot -> dynamically reroute walking path!
+                  setRoutedRVM(rvm);
+                }
+              }}
               focusedRVM={focusedRVM}
               onClearFocus={() => setFocusedRVM(null)}
-              targetRVM={selectedRVM || focusedRVM || nearestOperatingRVM}
+              targetRVM={routedRVM || nearestOperatingRVM}
             />
           </div>
 
@@ -306,11 +321,11 @@ export const App: React.FC = () => {
         </div>
       </div>
 
-      {/* Navigation Modal */}
+      {/* Navigation Modal - only opens on second tap */}
       <NavigationModal
-        rvm={selectedRVM}
+        rvm={modalRVM}
         userLocation={userLocation}
-        onClose={() => setSelectedRVM(null)}
+        onClose={() => setModalRVM(null)}
       />
 
       {/* PWA Install Banner */}

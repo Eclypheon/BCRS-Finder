@@ -186,16 +186,22 @@ export const MapView: React.FC<MapViewProps> = ({
     // Zoom control in bottom right
     L.control.zoom({ position: 'bottomright' }).addTo(map);
 
-    // Canvas renderer for smooth rendering of 1,400+ dots
-    const canvas = L.canvas({ padding: 0.5 });
-    canvasRendererRef.current = canvas;
-
-    const markersGroup = L.layerGroup().addTo(map);
-    markersLayerRef.current = markersGroup;
+    // Dedicated background pane for route polylines so they never block dot clicks
+    if (!map.getPane('routePane')) {
+      const routePane = map.createPane('routePane');
+      routePane.style.zIndex = '350';
+    }
 
     // Dedicated layer group for dotted walking path
     const routeGroup = L.layerGroup().addTo(map);
     routeLayerRef.current = routeGroup;
+
+    // Canvas renderer with generous tolerance (16px) for responsive touch sensing on mobile
+    const canvas = L.canvas({ padding: 0.5, tolerance: 16 });
+    canvasRendererRef.current = canvas;
+
+    const markersGroup = L.layerGroup().addTo(map);
+    markersLayerRef.current = markersGroup;
 
     mapInstanceRef.current = map;
 
@@ -220,6 +226,8 @@ export const MapView: React.FC<MapViewProps> = ({
     if (walkingRoute && walkingRoute.coordinates.length > 0) {
       // Dark outline underneath for crisp contrast on any map tiles
       const outline = L.polyline(walkingRoute.coordinates, {
+        pane: 'routePane',
+        interactive: false,
         color: '#020617',
         weight: 6.5,
         dashArray: '3, 8',
@@ -230,6 +238,8 @@ export const MapView: React.FC<MapViewProps> = ({
 
       // Bright blue dotted line for walking path
       const line = L.polyline(walkingRoute.coordinates, {
+        pane: 'routePane',
+        interactive: false,
         color: '#38bdf8',
         weight: 4.5,
         dashArray: '3, 8',
@@ -366,29 +376,35 @@ export const MapView: React.FC<MapViewProps> = ({
     filtered.forEach((rvm) => {
       const statusInfo = getMachineStatusInfo(rvm);
       const isFull = statusInfo.category === 'FULL';
+      const isTarget = targetRVM?.id === rvm.id;
 
-      // Colored dot marker: Green (In Operation) or Red (Bin Full)
+      // Colored dot marker: Green (In Operation) or Red (Bin Full), with highlight if active routed target
       const circle = L.circleMarker([rvm.latitude, rvm.longitude], {
         renderer: canvas,
-        radius: isFull ? 7.5 : 6.5,
-        fillColor: statusInfo.hex,
-        color: '#0f172a',
-        weight: 1.5,
-        opacity: 0.9,
+        radius: isTarget ? 10.5 : (isFull ? 7.5 : 6.5),
+        fillColor: isTarget ? '#38bdf8' : statusInfo.hex,
+        color: isTarget ? '#ffffff' : '#0f172a',
+        weight: isTarget ? 3 : 1.5,
+        opacity: 1,
         fillOpacity: 0.95,
+        interactive: true,
       });
 
-      // Tooltip with clean details
+      // Tooltip with clean details and tap hint
       const distanceText = rvm.distanceMeters !== undefined ? formatDistance(rvm.distanceMeters) : '';
+      const actionHint = isTarget
+        ? 'Tap again to open navigation options'
+        : 'Tap once to route walking path here';
+
       const tooltipContent = `
         <div class="p-1 min-w-[160px] text-slate-900">
           <div class="font-bold text-xs truncate leading-tight">${rvm.locationName}</div>
           <div class="flex items-center gap-1.5 mt-1">
-            <span class="inline-block w-2 h-2 rounded-full" style="background-color: ${statusInfo.hex}"></span>
-            <span class="text-[11px] font-semibold">${statusInfo.label}</span>
+            <span class="inline-block w-2 h-2 rounded-full" style="background-color: ${isTarget ? '#38bdf8' : statusInfo.hex}"></span>
+            <span class="text-[11px] font-semibold">${isTarget ? 'Routed Target' : statusInfo.label}</span>
             ${distanceText ? `<span class="text-[11px] text-slate-500 font-bold ml-auto">${distanceText}</span>` : ''}
           </div>
-          <div class="text-[10px] text-slate-500 mt-0.5">Click dot for GPS navigation</div>
+          <div class="text-[10px] text-blue-600 font-medium mt-1">${actionHint}</div>
         </div>
       `;
 
@@ -398,14 +414,15 @@ export const MapView: React.FC<MapViewProps> = ({
         className: 'rvm-map-tooltip',
       });
 
-      // Clicking on dot pops up navigation modal
-      circle.on('click', () => {
+      // Clicking / tapping on dot triggers 1st-tap route or 2nd-tap modal
+      circle.on('click', (e) => {
+        L.DomEvent.stopPropagation(e);
         onSelectRVM(rvm);
       });
 
       circle.addTo(markersGroup);
     });
-  }, [rvms, activeFilter, onSelectRVM]);
+  }, [rvms, activeFilter, onSelectRVM, targetRVM?.id]);
 
   // Recenter button click handler
   const handleRecenter = () => {
