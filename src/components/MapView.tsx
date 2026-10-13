@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useRef, useState, useCallback } from 'react';
 import L from 'leaflet';
 import { RVM, UserLocation, FilterOption } from '../types/rvm';
 import { getMachineStatusInfo, formatDistance } from '../utils/geo';
@@ -59,8 +59,23 @@ export const MapView: React.FC<MapViewProps> = ({
 
   const [activeFilter, setActiveFilter] = useState<FilterOption>('ALL');
   const [mapStyle, setMapStyle] = useState<'osm' | 'onemap' | 'dark'>('osm');
+  const [recenterTop, setRecenterTop] = useState<number | null>(null);
 
   const DEFAULT_ZOOM = 16; // 3 zooms out from OSM maxZoom 19
+
+  // Dynamically align the top of the Recenter button to the top of Leaflet's zoom-in (+) button
+  const updateRecenterPosition = useCallback(() => {
+    if (!mapContainerRef.current) return;
+    const zoomInBtn = mapContainerRef.current.querySelector('.leaflet-control-zoom-in');
+    if (zoomInBtn) {
+      const mapRect = mapContainerRef.current.getBoundingClientRect();
+      const btnRect = zoomInBtn.getBoundingClientRect();
+      const topOffset = btnRect.top - mapRect.top;
+      if (topOffset > 0) {
+        setRecenterTop(Math.round(topOffset));
+      }
+    }
+  }, []);
 
   // Initialize Map
   useEffect(() => {
@@ -99,21 +114,30 @@ export const MapView: React.FC<MapViewProps> = ({
 
     mapInstanceRef.current = map;
 
+    // Trigger alignment once controls are attached
+    setTimeout(updateRecenterPosition, 50);
+    setTimeout(updateRecenterPosition, 250);
+
     return () => {
       map.remove();
       mapInstanceRef.current = null;
     };
-  }, []);
+  }, [updateRecenterPosition]);
 
   // ResizeObserver to ensure Leaflet map adjusts to container height dynamically
   useEffect(() => {
     if (!mapContainerRef.current) return;
     const observer = new ResizeObserver(() => {
       mapInstanceRef.current?.invalidateSize();
+      updateRecenterPosition();
     });
     observer.observe(mapContainerRef.current);
-    return () => observer.disconnect();
-  }, []);
+    window.addEventListener('resize', updateRecenterPosition);
+    return () => {
+      observer.disconnect();
+      window.removeEventListener('resize', updateRecenterPosition);
+    };
+  }, [updateRecenterPosition]);
 
   // Update map tile layer if style changes
   useEffect(() => {
@@ -131,7 +155,9 @@ export const MapView: React.FC<MapViewProps> = ({
       maxZoom: activeCfg.maxZoom,
       attribution: activeCfg.attribution,
     }).addTo(map);
-  }, [mapStyle]);
+
+    setTimeout(updateRecenterPosition, 100);
+  }, [mapStyle, updateRecenterPosition]);
 
   // Update User Marker & center map when user location changes
   useEffect(() => {
@@ -273,7 +299,7 @@ export const MapView: React.FC<MapViewProps> = ({
   }, [rvms]);
 
   return (
-    <div className="relative w-full h-full min-h-[220px] rounded-2xl overflow-hidden border border-slate-800 shadow-2xl bg-slate-950">
+    <div className="relative w-full h-full min-h-0 rounded-2xl overflow-hidden border border-slate-800 shadow-2xl bg-slate-950">
       {/* The Leaflet Map container */}
       <div ref={mapContainerRef} className="w-full h-full z-0" />
 
@@ -340,9 +366,16 @@ export const MapView: React.FC<MapViewProps> = ({
         </div>
       </div>
 
-      {/* Floating Recenter Button - shifted left to perfectly match top toggles */}
+      {/* Floating Recenter Button - top aligned with top of the + button */}
       {userLocation && (
-        <div className="absolute bottom-2.5 left-2 sm:left-3 z-[500]">
+        <div
+          className="absolute left-2 sm:left-3 z-[500] transition-all duration-150"
+          style={
+            recenterTop !== null
+              ? { top: `${recenterTop}px` }
+              : { bottom: '5rem' }
+          }
+        >
           <button
             type="button"
             onClick={handleRecenter}

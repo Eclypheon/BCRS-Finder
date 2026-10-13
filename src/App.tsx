@@ -284,14 +284,23 @@ export const App: React.FC = () => {
           />
         </div>
 
-        {/* BOTTOM SECTION: Map Centered on Location */}
-        <div className="flex-1 min-h-0 px-3 sm:px-6 pb-[max(env(safe-area-inset-bottom,0px),0.75rem)] pt-0">
-          <MapView
-            userLocation={userLocation}
-            rvms={rvmsWithDistance}
-            onSelectRVM={(rvm) => setSelectedRVM(rvm)}
-            focusedRVM={focusedRVM}
-            onClearFocus={() => setFocusedRVM(null)}
+        {/* BOTTOM SECTION: Map Centered on Location + Safe Area Bottom Spacer */}
+        <div className="flex-1 min-h-0 px-3 sm:px-6 pt-0 flex flex-col">
+          {/* Map Container - cleanly bounded inside flex column */}
+          <div className="flex-1 min-h-0 relative">
+            <MapView
+              userLocation={userLocation}
+              rvms={rvmsWithDistance}
+              onSelectRVM={(rvm) => setSelectedRVM(rvm)}
+              focusedRVM={focusedRVM}
+              onClearFocus={() => setFocusedRVM(null)}
+            />
+          </div>
+
+          {/* Dedicated bottom spacer to prevent map from stretching into unsafe area / home indicator */}
+          <div
+            className="shrink-0 w-full h-3 box-content pb-[max(env(safe-area-inset-bottom,0px),0.5rem)]"
+            aria-hidden="true"
           />
         </div>
       </div>
