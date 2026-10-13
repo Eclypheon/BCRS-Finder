@@ -1,0 +1,40 @@
+{
+  "name": "bcrs-finder",
+  "version": "1.0.0",
+  "description": "PWA to find nearest BCRS reverse vending machines in Singapore with live statuses and 1-tap navigation",
+  "main": "server/index.js",
+  "scripts": {
+    "dev": "vite",
+    "server": "node server/index.js",
+    "build": "tsc && vite build",
+    "preview": "vite preview",
+    "start": "NODE_ENV=production node server/index.js",
+    "fetch-seed": "node scripts/fetch-seed.js"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "dependencies": {
+    "cors": "^2.8.6",
+    "express": "^5.3.0",
+    "leaflet": "^1.9.4",
+    "lucide-react": "^1.56.0",
+    "react": "^19.3.0",
+    "react-dom": "^19.3.0"
+  },
+  "devDependencies": {
+    "@tailwindcss/vite": "^4.3.3",
+    "@types/cors": "^2.8.19",
+    "@types/express": "^5.0.6",
+    "@types/leaflet": "^1.9.22",
+    "@types/node": "^26.6.5",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "@vitejs/plugin-react": "^6.1.2",
+    "tailwindcss": "^4.3.3",
+    "typescript": "^7.0.2",
+    "vite": "^8.3.4",
+    "vite-plugin-pwa": "^2.0.0"
+  }
+}
