@@ -54,7 +54,9 @@ export async function fetchAllRVMs(forceRefresh = false): Promise<RVM[]> {
 
   // 2. Try static public JSON
   try {
-    const res = await fetch('/data/seed-rvms.json');
+    const base = import.meta.env.BASE_URL || '/';
+    const seedUrl = `${base.replace(/\/$/, '')}/data/seed-rvms.json`;
+    const res = await fetch(seedUrl);
     if (res.ok) {
       const data = await res.json();
       if (Array.isArray(data) && data.length > 0) {
