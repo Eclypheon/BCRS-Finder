@@ -58,26 +58,29 @@ export const MapView: React.FC<MapViewProps> = ({
   const canvasRendererRef = useRef<L.Canvas | null>(null);
 
   const [activeFilter, setActiveFilter] = useState<FilterOption>('ALL');
-  const [mapStyle, setMapStyle] = useState<'onemap' | 'osm' | 'dark'>('onemap');
+  const [mapStyle, setMapStyle] = useState<'osm' | 'onemap' | 'dark'>('osm');
+
+  const DEFAULT_ZOOM = 16; // 3 zooms out from OSM maxZoom 19
 
   // Initialize Map
   useEffect(() => {
     if (!mapContainerRef.current) return;
     if (mapInstanceRef.current) return;
 
-    const initialLat = userLocation?.latitude || 1.3521;
-    const initialLng = userLocation?.longitude || 103.8198;
-    const initialZoom = userLocation ? 15 : 12;
+    const initialLat = userLocation?.latitude || 1.33649;
+    const initialLng = userLocation?.longitude || 103.87377;
 
     const map = L.map(mapContainerRef.current, {
       center: [initialLat, initialLng],
-      zoom: initialZoom,
+      zoom: DEFAULT_ZOOM,
+      minZoom: 11,
+      maxZoom: 19,
       zoomControl: false,
       attributionControl: true,
       preferCanvas: true,
     });
 
-    // Add free open-source tile layer (OneMap SG HD default)
+    // Add free open-source tile layer (OpenStreetMap default)
     const activeCfg = TILE_CONFIGS[mapStyle];
     L.tileLayer(activeCfg.url, {
       maxZoom: activeCfg.maxZoom,
@@ -100,6 +103,16 @@ export const MapView: React.FC<MapViewProps> = ({
       map.remove();
       mapInstanceRef.current = null;
     };
+  }, []);
+
+  // ResizeObserver to ensure Leaflet map adjusts to container height dynamically
+  useEffect(() => {
+    if (!mapContainerRef.current) return;
+    const observer = new ResizeObserver(() => {
+      mapInstanceRef.current?.invalidateSize();
+    });
+    observer.observe(mapContainerRef.current);
+    return () => observer.disconnect();
   }, []);
 
   // Update map tile layer if style changes
@@ -158,8 +171,8 @@ export const MapView: React.FC<MapViewProps> = ({
       );
     }
 
-    // Pan map to user
-    map.setView(userLatLng, Math.max(map.getZoom(), 14), { animate: true });
+    // Pan map to user at default zoom
+    map.setView(userLatLng, DEFAULT_ZOOM, { animate: true });
   }, [userLocation]);
 
   // Fly to focused RVM if requested
@@ -240,8 +253,8 @@ export const MapView: React.FC<MapViewProps> = ({
   const handleRecenter = () => {
     const map = mapInstanceRef.current;
     if (!map || !userLocation) return;
-    map.flyTo([userLocation.latitude, userLocation.longitude], 15, {
-      duration: 1,
+    map.flyTo([userLocation.latitude, userLocation.longitude], DEFAULT_ZOOM, {
+      duration: 0.8,
     });
   };
 
@@ -260,98 +273,96 @@ export const MapView: React.FC<MapViewProps> = ({
   }, [rvms]);
 
   return (
-    <div className="relative w-full h-full min-h-[420px] rounded-2xl overflow-hidden border border-slate-800 shadow-2xl bg-slate-950">
+    <div className="relative w-full h-full min-h-[220px] rounded-2xl overflow-hidden border border-slate-800 shadow-2xl bg-slate-950">
       {/* The Leaflet Map container */}
       <div ref={mapContainerRef} className="w-full h-full z-0" />
 
-      {/* Floating Filter Pills / Legend at Top of Map */}
-      <div className="absolute top-3 left-3 right-3 z-[500] pointer-events-none">
-        <div className="flex items-center justify-between gap-2 overflow-x-auto no-scrollbar pointer-events-auto">
-          {/* Status Filter Buttons */}
-          <div className="flex items-center gap-1.5 p-1 bg-slate-900/90 backdrop-blur-md border border-slate-800 rounded-xl shadow-lg">
-            <button
-              type="button"
-              onClick={() => setActiveFilter('ALL')}
-              className={`px-2.5 py-1 rounded-lg text-xs font-bold transition-all cursor-pointer ${
-                activeFilter === 'ALL'
-                  ? 'bg-slate-700 text-white shadow'
-                  : 'text-slate-400 hover:text-slate-200'
-              }`}
-            >
-              All ({counts.all})
-            </button>
+      {/* Floating Controls at Top of Map */}
+      <div className="absolute top-2.5 left-2 sm:left-3 right-2 sm:right-3 z-[500] pointer-events-none flex items-center justify-between gap-1.5">
+        {/* Status Filter Buttons - shifted to the left, more compact */}
+        <div className="flex items-center gap-1 p-0.5 sm:p-1 bg-slate-900/95 backdrop-blur-md border border-slate-800/90 rounded-xl shadow-lg pointer-events-auto">
+          <button
+            type="button"
+            onClick={() => setActiveFilter('ALL')}
+            className={`px-2 py-1 rounded-lg text-[11px] font-bold transition-all cursor-pointer ${
+              activeFilter === 'ALL'
+                ? 'bg-slate-700 text-white shadow'
+                : 'text-slate-400 hover:text-slate-200'
+            }`}
+          >
+            All ({counts.all})
+          </button>
 
-            {/* Green: In Operation */}
-            <button
-              type="button"
-              onClick={() => setActiveFilter('RUNNING')}
-              className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-bold transition-all cursor-pointer ${
-                activeFilter === 'RUNNING'
-                  ? 'bg-emerald-600 text-white shadow'
-                  : 'text-emerald-400 hover:bg-emerald-950/40'
-              }`}
-            >
-              <span className="w-2 h-2 rounded-full bg-emerald-400"></span>
-              <span>In Operation</span>
-              <span className="opacity-80 font-normal">({counts.running})</span>
-            </button>
+          {/* Green: In Operation */}
+          <button
+            type="button"
+            onClick={() => setActiveFilter('RUNNING')}
+            className={`inline-flex items-center gap-1 px-2 py-1 rounded-lg text-[11px] font-bold transition-all cursor-pointer ${
+              activeFilter === 'RUNNING'
+                ? 'bg-emerald-600 text-white shadow'
+                : 'text-emerald-400 hover:bg-emerald-950/40'
+            }`}
+          >
+            <span className="w-1.5 h-1.5 rounded-full bg-emerald-400"></span>
+            <span>In Operation</span>
+            <span className="opacity-80 font-normal hidden xs:inline">({counts.running})</span>
+          </button>
 
-            {/* Red: Bin Full */}
-            <button
-              type="button"
-              onClick={() => setActiveFilter('FULL')}
-              className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-bold transition-all cursor-pointer ${
-                activeFilter === 'FULL'
-                  ? 'bg-rose-600 text-white shadow'
-                  : 'text-rose-400 hover:bg-rose-950/40'
-              }`}
-            >
-              <span className="w-2 h-2 rounded-full bg-rose-400"></span>
-              <span>Bin Full</span>
-              <span className="opacity-80 font-normal">({counts.full})</span>
-            </button>
-          </div>
+          {/* Red: Bin Full */}
+          <button
+            type="button"
+            onClick={() => setActiveFilter('FULL')}
+            className={`inline-flex items-center gap-1 px-2 py-1 rounded-lg text-[11px] font-bold transition-all cursor-pointer ${
+              activeFilter === 'FULL'
+                ? 'bg-rose-600 text-white shadow'
+                : 'text-rose-400 hover:bg-rose-950/40'
+            }`}
+          >
+            <span className="w-1.5 h-1.5 rounded-full bg-rose-400"></span>
+            <span>Bin Full</span>
+            <span className="opacity-80 font-normal hidden xs:inline">({counts.full})</span>
+          </button>
+        </div>
 
-          {/* Map Layer Switcher */}
-          <div className="flex items-center gap-1 p-1 bg-slate-900/90 backdrop-blur-md border border-slate-800 rounded-xl shadow-lg shrink-0">
-            <button
-              type="button"
-              onClick={() =>
-                setMapStyle((s) => (s === 'onemap' ? 'osm' : s === 'osm' ? 'dark' : 'onemap'))
-              }
-              title={`Switch Basemap: currently ${TILE_CONFIGS[mapStyle].name}`}
-              className="inline-flex items-center gap-1 px-2 py-1 rounded-lg text-xs font-semibold text-slate-300 hover:text-white hover:bg-slate-800 transition-colors cursor-pointer"
-            >
-              <Layers className="w-3.5 h-3.5 text-emerald-400" />
-              <span className="hidden sm:inline">{TILE_CONFIGS[mapStyle].name}</span>
-            </button>
-          </div>
+        {/* Map Layer Switcher - comfortably inside the safe margin on the right */}
+        <div className="p-0.5 sm:p-1 bg-slate-900/95 backdrop-blur-md border border-slate-800/90 rounded-xl shadow-lg pointer-events-auto shrink-0">
+          <button
+            type="button"
+            onClick={() =>
+              setMapStyle((s) => (s === 'osm' ? 'onemap' : s === 'onemap' ? 'dark' : 'osm'))
+            }
+            title={`Switch Basemap: currently ${TILE_CONFIGS[mapStyle].name}`}
+            className="inline-flex items-center gap-1 px-2 py-1 rounded-lg text-[11px] font-semibold text-slate-300 hover:text-white hover:bg-slate-800 transition-colors cursor-pointer"
+          >
+            <Layers className="w-3.5 h-3.5 text-emerald-400" />
+            <span className="hidden xs:inline">{TILE_CONFIGS[mapStyle].name}</span>
+          </button>
         </div>
       </div>
 
-      {/* Floating Recenter Button */}
+      {/* Floating Recenter Button - shifted left to perfectly match top toggles */}
       {userLocation && (
-        <div className="absolute bottom-[max(env(safe-area-inset-bottom,0px),1rem)] left-4 z-[500]">
+        <div className="absolute bottom-2.5 left-2 sm:left-3 z-[500]">
           <button
             type="button"
             onClick={handleRecenter}
-            className="flex items-center gap-2 px-3 py-2 bg-slate-900/95 hover:bg-slate-800 active:bg-slate-700 text-slate-200 hover:text-white border border-slate-700/80 rounded-xl shadow-xl shadow-black/50 text-xs font-bold backdrop-blur-md transition-all cursor-pointer group"
+            className="flex items-center gap-1.5 px-2.5 py-1.5 bg-slate-900/95 hover:bg-slate-800 active:bg-slate-700 text-slate-200 hover:text-white border border-slate-800/90 rounded-xl shadow-xl shadow-black/50 text-[11px] font-bold backdrop-blur-md transition-all cursor-pointer group"
           >
-            <Locate className="w-4 h-4 text-blue-400 group-hover:scale-110 transition-transform" />
+            <Locate className="w-3.5 h-3.5 text-blue-400 group-hover:scale-110 transition-transform" />
             <span>Recenter</span>
           </button>
         </div>
       )}
 
       {/* Map Legend Overlay */}
-      <div className="absolute bottom-[max(env(safe-area-inset-bottom,0px),1rem)] right-16 z-[500] hidden sm:block pointer-events-none">
-        <div className="bg-slate-900/90 backdrop-blur-md border border-slate-800 rounded-xl px-3 py-1.5 text-[11px] text-slate-300 shadow-lg flex items-center gap-3">
-          <div className="flex items-center gap-1.5">
-            <span className="w-2.5 h-2.5 rounded-full bg-emerald-500"></span>
+      <div className="absolute bottom-2.5 right-14 z-[500] hidden sm:block pointer-events-none">
+        <div className="bg-slate-900/90 backdrop-blur-md border border-slate-800 rounded-xl px-2.5 py-1 text-[10px] text-slate-300 shadow-lg flex items-center gap-2.5">
+          <div className="flex items-center gap-1">
+            <span className="w-2 h-2 rounded-full bg-emerald-500"></span>
             <span>In Operation</span>
           </div>
-          <div className="flex items-center gap-1.5">
-            <span className="w-2.5 h-2.5 rounded-full bg-rose-500"></span>
+          <div className="flex items-center gap-1">
+            <span className="w-2 h-2 rounded-full bg-rose-500"></span>
             <span>Bin Full</span>
           </div>
         </div>

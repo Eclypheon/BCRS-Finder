@@ -21,7 +21,7 @@ const DEFAULT_SG_LOCATION: UserLocation = {
 
 export const App: React.FC = () => {
   const [rvms, setRvms] = useState<RVM[]>([]);
-  const [userLocation, setUserLocation] = useState<UserLocation | null>(null);
+  const [userLocation, setUserLocation] = useState<UserLocation>(DEFAULT_SG_LOCATION);
   const [isLoadingRvms, setIsLoadingRvms] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [isLoadingLocation, setIsLoadingLocation] = useState(false);
