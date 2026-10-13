@@ -122,7 +122,8 @@ export function getMachineStatusInfo(rvm: RVM, binItems?: BinStatusItem[]): Stat
 // Generate navigation deep links and web URLs
 export interface NavigationLinks {
   googleMapsWeb: string;
-  googleMapsApp: string;
+  googleMapsApp: string; // Android intent / navigation scheme
+  googleMapsIOS: string; // iOS Google Maps app scheme
   wazeWeb: string;
   wazeApp: string;
   appleMapsWeb: string;
@@ -139,11 +140,13 @@ export function getNavigationLinks(
   const destCoords = `${targetLat.toFixed(6)},${targetLng.toFixed(6)}`;
   const encodedDest = encodeURIComponent(targetAddress ? `${targetAddress}, Singapore` : destCoords);
 
-  // Google Maps: Universal link opens Google Maps app or web
-  // If user coords are known, specify origin
+  // Google Maps: Universal link, Android intent, and iOS native scheme
   let gWeb = `https://www.google.com/maps/dir/?api=1&destination=${destCoords}&travelmode=walking`;
+  let gIOS = `comgooglemaps://?daddr=${destCoords}&directionsmode=walking`;
   if (userLat && userLng) {
-    gWeb += `&origin=${userLat.toFixed(6)},${userLng.toFixed(6)}`;
+    const originCoords = `${userLat.toFixed(6)},${userLng.toFixed(6)}`;
+    gWeb += `&origin=${originCoords}`;
+    gIOS += `&saddr=${originCoords}`;
   }
   const gApp = `google.navigation:q=${destCoords}&mode=w`;
 
@@ -159,45 +162,85 @@ export function getNavigationLinks(
   return {
     googleMapsWeb: gWeb,
     googleMapsApp: gApp,
+    googleMapsIOS: gIOS,
     wazeWeb: wWeb,
     wazeApp: wApp,
     appleMapsWeb: aWeb,
-    appleMapsApp: aApp
+    appleMapsApp: aApp,
   };
 }
 
-// Helper to launch navigation app with smart fallback
-export function launchNavigation(appType: 'google' | 'waze' | 'apple', links: NavigationLinks) {
-  const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
-  const isAndroid = /Android/i.test(navigator.userAgent);
+/**
+ * Dispatches a native app deep link on mobile without opening an in-app
+ * browser sheet or leaving behind a stray blank tab when returning to the PWA.
+ */
+function openMobileDeepLink(appSchemeUrl: string, webFallbackUrl: string) {
+  let appOpened = false;
+  const startTime = Date.now();
 
-  if (appType === 'google') {
-    if (isAndroid) {
-      // Android intent link
-      window.location.href = links.googleMapsApp;
-      setTimeout(() => {
-        window.open(links.googleMapsWeb, '_blank', 'noopener,noreferrer');
-      }, 500);
-    } else {
-      window.open(links.googleMapsWeb, '_blank', 'noopener,noreferrer');
+  const markOpened = () => {
+    appOpened = true;
+  };
+
+  window.addEventListener('visibilitychange', markOpened, { once: true });
+  window.addEventListener('pagehide', markOpened, { once: true });
+  window.addEventListener('blur', markOpened, { once: true });
+
+  // Direct scheme invocation in the current browsing context never opens Safari sheets
+  window.location.href = appSchemeUrl;
+
+  // Fallback only if the native app failed to launch (i.e., user never left the page)
+  setTimeout(() => {
+    window.removeEventListener('visibilitychange', markOpened);
+    window.removeEventListener('pagehide', markOpened);
+    window.removeEventListener('blur', markOpened);
+
+    const elapsed = Date.now() - startTime;
+    // If the browser was blurred/hidden or the timer was paused because the OS launched the app:
+    if (appOpened || document.hidden || elapsed > 2000) {
+      return; // Native app opened successfully; do not open any browser tab!
     }
-  } else if (appType === 'waze') {
-    if (isIOS || isAndroid) {
-      window.location.href = links.wazeApp;
-      setTimeout(() => {
-        window.open(links.wazeWeb, '_blank', 'noopener,noreferrer');
-      }, 700);
-    } else {
-      window.open(links.wazeWeb, '_blank', 'noopener,noreferrer');
-    }
-  } else if (appType === 'apple') {
-    if (isIOS) {
+
+    // App is not installed: navigate to web fallback in current window
+    window.location.href = webFallbackUrl;
+  }, 1200);
+}
+
+// Helper to launch navigation app with smart fallback and zero stray tabs
+export function launchNavigation(appType: 'google' | 'waze' | 'apple', links: NavigationLinks) {
+  const isIOS =
+    /iPad|iPhone|iPod/.test(navigator.userAgent) ||
+    (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+  const isAndroid = /Android/i.test(navigator.userAgent);
+  const isMobile = isIOS || isAndroid;
+
+  if (appType === 'apple') {
+    if (isIOS || navigator.platform.toUpperCase().indexOf('MAC') >= 0) {
+      // Apple Maps is natively pre-installed on Apple devices; launch directly with no extra browser
       window.location.href = links.appleMapsApp;
-      setTimeout(() => {
-        window.open(links.appleMapsWeb, '_blank', 'noopener,noreferrer');
-      }, 700);
     } else {
       window.open(links.appleMapsWeb, '_blank', 'noopener,noreferrer');
     }
+    return;
+  }
+
+  if (appType === 'google') {
+    if (isIOS) {
+      openMobileDeepLink(links.googleMapsIOS, links.googleMapsWeb);
+    } else if (isAndroid) {
+      openMobileDeepLink(links.googleMapsApp, links.googleMapsWeb);
+    } else {
+      window.open(links.googleMapsWeb, '_blank', 'noopener,noreferrer');
+    }
+    return;
+  }
+
+  if (appType === 'waze') {
+    if (isMobile) {
+      openMobileDeepLink(links.wazeApp, links.wazeWeb);
+    } else {
+      window.open(links.wazeWeb, '_blank', 'noopener,noreferrer');
+    }
+    return;
   }
 }

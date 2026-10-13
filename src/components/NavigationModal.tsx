@@ -176,7 +176,10 @@ export const NavigationModal: React.FC<NavigationModalProps> = ({
               {/* 1. Google Maps */}
               <button
                 type="button"
-                onClick={() => launchNavigation('google', links)}
+                onClick={() => {
+                  launchNavigation('google', links);
+                  onClose();
+                }}
                 className="group flex items-center justify-between p-3.5 rounded-2xl bg-slate-800 hover:bg-slate-750 active:bg-slate-700 border border-slate-700 hover:border-blue-500/50 shadow-md transition-all cursor-pointer text-left"
               >
                 <div className="flex items-center gap-3">
@@ -204,7 +207,10 @@ export const NavigationModal: React.FC<NavigationModalProps> = ({
               {/* 2. Waze */}
               <button
                 type="button"
-                onClick={() => launchNavigation('waze', links)}
+                onClick={() => {
+                  launchNavigation('waze', links);
+                  onClose();
+                }}
                 className="group flex items-center justify-between p-3.5 rounded-2xl bg-slate-800 hover:bg-slate-750 active:bg-slate-700 border border-slate-700 hover:border-cyan-500/50 shadow-md transition-all cursor-pointer text-left"
               >
                 <div className="flex items-center gap-3">
@@ -234,7 +240,10 @@ export const NavigationModal: React.FC<NavigationModalProps> = ({
               {/* 3. Apple Maps */}
               <button
                 type="button"
-                onClick={() => launchNavigation('apple', links)}
+                onClick={() => {
+                  launchNavigation('apple', links);
+                  onClose();
+                }}
                 className="group flex items-center justify-between p-3.5 rounded-2xl bg-slate-800 hover:bg-slate-750 active:bg-slate-700 border border-slate-700 hover:border-emerald-500/50 shadow-md transition-all cursor-pointer text-left"
               >
                 <div className="flex items-center gap-3">
