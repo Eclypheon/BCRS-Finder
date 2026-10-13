@@ -37,6 +37,27 @@ export function estimateWalkMinutes(meters?: number): number {
   return Math.max(1, Math.round(meters / 80));
 }
 
+// Calculate initial bearing in degrees (0 = North, 90 = East, 180 = South, 270 = West)
+export function calculateBearingDegrees(
+  lat1: number,
+  lon1: number,
+  lat2: number,
+  lon2: number
+): number {
+  const phi1 = (lat1 * Math.PI) / 180;
+  const phi2 = (lat2 * Math.PI) / 180;
+  const deltaLambda = ((lon2 - lon1) * Math.PI) / 180;
+
+  const y = Math.sin(deltaLambda) * Math.cos(phi2);
+  const x =
+    Math.cos(phi1) * Math.sin(phi2) -
+    Math.sin(phi1) * Math.cos(phi2) * Math.cos(deltaLambda);
+
+  const theta = Math.atan2(y, x);
+  const degrees = (theta * 180) / Math.PI;
+  return (degrees + 360) % 360;
+}
+
 // Classify machine status into Green (In Operation), Yellow (Filling Fast), Red (Bin Full), or Gray (Offline)
 export function getMachineStatusInfo(rvm: RVM, binItems?: BinStatusItem[]): StatusStyleInfo {
   const raw = (rvm.status || '').toUpperCase().trim();

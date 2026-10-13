@@ -1,7 +1,8 @@
 import React, { useEffect, useRef, useState, useCallback } from 'react';
 import L from 'leaflet';
 import { RVM, UserLocation, FilterOption } from '../types/rvm';
-import { getMachineStatusInfo, formatDistance } from '../utils/geo';
+import { getMachineStatusInfo, formatDistance, calculateBearingDegrees } from '../utils/geo';
+import { fetchWalkingRoute, WalkingRouteResult } from '../services/routing';
 import { Compass, Locate, Filter, Layers } from 'lucide-react';
 
 interface MapViewProps {
@@ -10,6 +11,7 @@ interface MapViewProps {
   onSelectRVM: (rvm: RVM) => void;
   focusedRVM: RVM | null;
   onClearFocus: () => void;
+  targetRVM?: RVM | null;
 }
 
 interface TileLayerConfig {
@@ -50,16 +52,21 @@ export const MapView: React.FC<MapViewProps> = ({
   onSelectRVM,
   focusedRVM,
   onClearFocus,
+  targetRVM,
 }) => {
   const mapContainerRef = useRef<HTMLDivElement>(null);
   const mapInstanceRef = useRef<L.Map | null>(null);
   const userMarkerRef = useRef<L.Marker | null>(null);
   const markersLayerRef = useRef<L.LayerGroup | null>(null);
+  const routeLayerRef = useRef<L.LayerGroup | null>(null);
   const canvasRendererRef = useRef<L.Canvas | null>(null);
 
   const [activeFilter, setActiveFilter] = useState<FilterOption>('ALL');
   const [mapStyle, setMapStyle] = useState<'osm' | 'onemap' | 'dark'>('osm');
   const [recenterTop, setRecenterTop] = useState<number | null>(null);
+  const [walkingRoute, setWalkingRoute] = useState<WalkingRouteResult | null>(null);
+  const [deviceHeading, setDeviceHeading] = useState<number | null>(null);
+  const [isHeadingUp, setIsHeadingUp] = useState<boolean>(false);
 
   const DEFAULT_ZOOM = 16; // 3 zooms out from OSM maxZoom 19
 
@@ -76,6 +83,80 @@ export const MapView: React.FC<MapViewProps> = ({
       }
     }
   }, []);
+
+  // Compute effective heading (device compass if available, otherwise azimuth to target machine)
+  const effectiveHeading = React.useMemo(() => {
+    if (deviceHeading !== null) return deviceHeading;
+    if (userLocation && targetRVM) {
+      return Math.round(
+        calculateBearingDegrees(
+          userLocation.latitude,
+          userLocation.longitude,
+          targetRVM.latitude,
+          targetRVM.longitude
+        )
+      );
+    }
+    return null;
+  }, [deviceHeading, userLocation, targetRVM]);
+
+  // Listen to device orientation / compass sensor
+  useEffect(() => {
+    let lastHeading = -1;
+
+    const handleOrientation = (e: DeviceOrientationEvent) => {
+      let currentHeading: number | null = null;
+      if (typeof (e as any).webkitCompassHeading === 'number') {
+        currentHeading = (e as any).webkitCompassHeading;
+      } else if (typeof e.alpha === 'number') {
+        currentHeading = (360 - e.alpha) % 360;
+      }
+
+      if (currentHeading !== null && !isNaN(currentHeading)) {
+        const rounded = Math.round(currentHeading) % 360;
+        if (Math.abs(rounded - lastHeading) > 1.5) {
+          lastHeading = rounded;
+          setDeviceHeading(rounded);
+        }
+      }
+    };
+
+    window.addEventListener('deviceorientation', handleOrientation as any, true);
+    if ('ondeviceorientationabsolute' in window) {
+      window.addEventListener('deviceorientationabsolute', handleOrientation as any, true);
+    }
+
+    return () => {
+      window.removeEventListener('deviceorientation', handleOrientation as any, true);
+      if ('ondeviceorientationabsolute' in window) {
+        window.removeEventListener('deviceorientationabsolute', handleOrientation as any, true);
+      }
+    };
+  }, []);
+
+  // Fetch walking path using OpenStreetMap OSRM routing
+  useEffect(() => {
+    if (!userLocation || !targetRVM) {
+      setWalkingRoute(null);
+      return;
+    }
+
+    let active = true;
+    fetchWalkingRoute(
+      userLocation.latitude,
+      userLocation.longitude,
+      targetRVM.latitude,
+      targetRVM.longitude
+    ).then((result) => {
+      if (active) {
+        setWalkingRoute(result);
+      }
+    });
+
+    return () => {
+      active = false;
+    };
+  }, [userLocation?.latitude, userLocation?.longitude, targetRVM?.latitude, targetRVM?.longitude]);
 
   // Initialize Map
   useEffect(() => {
@@ -112,6 +193,10 @@ export const MapView: React.FC<MapViewProps> = ({
     const markersGroup = L.layerGroup().addTo(map);
     markersLayerRef.current = markersGroup;
 
+    // Dedicated layer group for dotted walking path
+    const routeGroup = L.layerGroup().addTo(map);
+    routeLayerRef.current = routeGroup;
+
     mapInstanceRef.current = map;
 
     // Trigger alignment once controls are attached
@@ -123,6 +208,40 @@ export const MapView: React.FC<MapViewProps> = ({
       mapInstanceRef.current = null;
     };
   }, [updateRecenterPosition]);
+
+  // Draw walking path as blue dotted polyline on the map
+  useEffect(() => {
+    const map = mapInstanceRef.current;
+    const routeGroup = routeLayerRef.current;
+    if (!map || !routeGroup) return;
+
+    routeGroup.clearLayers();
+
+    if (walkingRoute && walkingRoute.coordinates.length > 0) {
+      // Dark outline underneath for crisp contrast on any map tiles
+      const outline = L.polyline(walkingRoute.coordinates, {
+        color: '#020617',
+        weight: 6.5,
+        dashArray: '3, 8',
+        lineCap: 'round',
+        lineJoin: 'round',
+        opacity: 0.65,
+      });
+
+      // Bright blue dotted line for walking path
+      const line = L.polyline(walkingRoute.coordinates, {
+        color: '#38bdf8',
+        weight: 4.5,
+        dashArray: '3, 8',
+        lineCap: 'round',
+        lineJoin: 'round',
+        opacity: 0.95,
+      });
+
+      outline.addTo(routeGroup);
+      line.addTo(routeGroup);
+    }
+  }, [walkingRoute]);
 
   // ResizeObserver to ensure Leaflet map adjusts to container height dynamically
   useEffect(() => {
@@ -159,30 +278,43 @@ export const MapView: React.FC<MapViewProps> = ({
     setTimeout(updateRecenterPosition, 100);
   }, [mapStyle, updateRecenterPosition]);
 
-  // Update User Marker & center map when user location changes
+  // Update User Marker with Direction Facing Arrow & center map when user location changes
   useEffect(() => {
     const map = mapInstanceRef.current;
     if (!map || !userLocation) return;
 
     const userLatLng: L.LatLngExpression = [userLocation.latitude, userLocation.longitude];
 
-    // Pulsing custom user location icon
+    // Pulsing dot + directional blue beam / arrow (Google Maps style)
     const userHtml = `
-      <div class="relative flex items-center justify-center w-8 h-8">
-        <div class="absolute w-7 h-7 rounded-full bg-blue-500/40 animate-ping"></div>
-        <div class="relative w-4 h-4 rounded-full bg-blue-500 border-2 border-white shadow-lg shadow-blue-500/50"></div>
+      <div class="user-location-marker relative flex items-center justify-center w-12 h-12 pointer-events-none">
+        ${effectiveHeading !== null ? `
+          <div class="absolute inset-0 flex items-center justify-center pointer-events-none transition-transform duration-150 ease-out" style="transform: rotate(${effectiveHeading}deg);">
+            <svg class="w-12 h-12 pointer-events-none drop-shadow" viewBox="0 0 48 48" fill="none">
+              <!-- Directional beam cone -->
+              <path d="M24 24 L13 5 A 21 21 0 0 1 35 5 Z" fill="rgba(56, 189, 248, 0.38)" />
+              <!-- Blue directional arrow tip with crisp border -->
+              <polygon points="24,1 29,11 24,8.5 19,11" fill="#0284c7" stroke="#ffffff" stroke-width="1.2" stroke-linejoin="round" />
+            </svg>
+          </div>
+        ` : `
+          <div class="absolute w-7 h-7 rounded-full bg-blue-500/40 animate-ping"></div>
+        `}
+        <!-- Center blue location dot -->
+        <div class="relative w-4 h-4 rounded-full bg-blue-500 border-2 border-white shadow-lg shadow-blue-500/60 z-10"></div>
       </div>
     `;
 
     const userIcon = L.divIcon({
       html: userHtml,
-      className: 'user-location-marker',
-      iconSize: [32, 32],
-      iconAnchor: [16, 16],
+      className: 'user-marker-container',
+      iconSize: [48, 48],
+      iconAnchor: [24, 24],
     });
 
     if (userMarkerRef.current) {
       userMarkerRef.current.setLatLng(userLatLng);
+      userMarkerRef.current.setIcon(userIcon);
     } else {
       userMarkerRef.current = L.marker(userLatLng, {
         icon: userIcon,
@@ -193,13 +325,13 @@ export const MapView: React.FC<MapViewProps> = ({
         `<div class="font-bold text-xs">Your Location</div><div class="text-[11px] text-slate-400">${
           userLocation.label || userLocation.postalCode || 'Current Position'
         }</div>`,
-        { direction: 'top', offset: [0, -12] }
+        { direction: 'top', offset: [0, -14] }
       );
     }
 
     // Pan map to user at default zoom
     map.setView(userLatLng, DEFAULT_ZOOM, { animate: true });
-  }, [userLocation]);
+  }, [userLocation, effectiveHeading]);
 
   // Fly to focused RVM if requested
   useEffect(() => {
@@ -284,6 +416,23 @@ export const MapView: React.FC<MapViewProps> = ({
     });
   };
 
+  // Toggle between North-Up (default) and Heading-Up (direction you are facing)
+  const toggleCompassMode = async () => {
+    // Request permission on iOS 13+ if needed
+    if (typeof (DeviceOrientationEvent as any)?.requestPermission === 'function') {
+      try {
+        const response = await (DeviceOrientationEvent as any).requestPermission();
+        if (response !== 'granted') {
+          console.info('Device orientation permission denied');
+        }
+      } catch (err) {
+        console.warn('Orientation permission error:', err);
+      }
+    }
+
+    setIsHeadingUp((prev) => !prev);
+  };
+
   // Status Counts for Legend
   const counts = React.useMemo(() => {
     let running = 0;
@@ -300,8 +449,16 @@ export const MapView: React.FC<MapViewProps> = ({
 
   return (
     <div className="relative w-full h-full min-h-0 rounded-2xl overflow-hidden border border-slate-800 shadow-2xl bg-slate-950">
-      {/* The Leaflet Map container */}
-      <div ref={mapContainerRef} className="w-full h-full z-0" />
+      {/* The Leaflet Map container with smooth heading rotation */}
+      <div
+        ref={mapContainerRef}
+        className="w-full h-full z-0 origin-center transition-transform duration-300 ease-out"
+        style={
+          isHeadingUp && effectiveHeading !== null
+            ? { transform: `rotate(${-effectiveHeading}deg) scale(1.42)` }
+            : { transform: 'rotate(0deg) scale(1)' }
+        }
+      />
 
       {/* Floating Controls at Top of Map */}
       <div className="absolute top-2.5 left-2 sm:left-3 right-2 sm:right-3 z-[500] pointer-events-none flex items-center justify-between gap-1.5">
@@ -366,16 +523,17 @@ export const MapView: React.FC<MapViewProps> = ({
         </div>
       </div>
 
-      {/* Floating Recenter Button - top aligned with top of the + button */}
+      {/* Floating Left Controls (Recenter + Compass Stack) */}
       {userLocation && (
         <div
-          className="absolute left-2 sm:left-3 z-[500] transition-all duration-150"
+          className="absolute left-2 sm:left-3 z-[500] transition-all duration-150 flex flex-col gap-1.5 items-start"
           style={
             recenterTop !== null
               ? { top: `${recenterTop}px` }
               : { bottom: '5rem' }
           }
         >
+          {/* Recenter Button */}
           <button
             type="button"
             onClick={handleRecenter}
@@ -383,6 +541,28 @@ export const MapView: React.FC<MapViewProps> = ({
           >
             <Locate className="w-3.5 h-3.5 text-blue-400 group-hover:scale-110 transition-transform" />
             <span>Recenter</span>
+          </button>
+
+          {/* Compass Button below Recenter */}
+          <button
+            type="button"
+            onClick={toggleCompassMode}
+            title={isHeadingUp ? 'Orient North' : 'Orient to Facing Direction'}
+            className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl shadow-xl shadow-black/50 text-[11px] font-bold backdrop-blur-md transition-all cursor-pointer border ${
+              isHeadingUp
+                ? 'bg-blue-600/90 hover:bg-blue-500 text-white border-blue-400/80 shadow-blue-500/25'
+                : 'bg-slate-900/95 hover:bg-slate-800 active:bg-slate-700 text-slate-200 hover:text-white border-slate-800/90'
+            }`}
+          >
+            <Compass
+              className={`w-3.5 h-3.5 transition-transform duration-200 ${
+                isHeadingUp ? 'text-white' : 'text-rose-400'
+              }`}
+              style={{
+                transform: `rotate(${isHeadingUp ? 0 : -(effectiveHeading || 0)}deg)`,
+              }}
+            />
+            <span>{isHeadingUp ? 'Heading Up' : 'North Up'}</span>
           </button>
         </div>
       )}

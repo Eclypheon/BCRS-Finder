@@ -294,6 +294,7 @@ export const App: React.FC = () => {
               onSelectRVM={(rvm) => setSelectedRVM(rvm)}
               focusedRVM={focusedRVM}
               onClearFocus={() => setFocusedRVM(null)}
+              targetRVM={selectedRVM || focusedRVM || nearestOperatingRVM}
             />
           </div>
 
