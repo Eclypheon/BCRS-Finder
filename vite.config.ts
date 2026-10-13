@@ -46,12 +46,26 @@ export default defineConfig({
         globPatterns: ['**/*.{js,css,html,ico,png,svg,json}'],
         runtimeCaching: [
           {
-            urlPattern: /^https:\/\/.*\.basemaps\.cartocdn\.com\/.*/i,
+            urlPattern: /^https:\/\/www\.onemap\.gov\.sg\/maps\/tiles\/.*/i,
             handler: 'CacheFirst',
             options: {
-              cacheName: 'carto-tiles-cache',
+              cacheName: 'onemap-tiles-cache',
               expiration: {
-                maxEntries: 500,
+                maxEntries: 1000,
+                maxAgeSeconds: 60 * 60 * 24 * 7 // 7 days
+              },
+              cacheableResponse: {
+                statuses: [0, 200]
+              }
+            }
+          },
+          {
+            urlPattern: /^https:\/\/.*tile\.openstreetmap\.org\/.*/i,
+            handler: 'CacheFirst',
+            options: {
+              cacheName: 'osm-tiles-cache',
+              expiration: {
+                maxEntries: 1000,
                 maxAgeSeconds: 60 * 60 * 24 * 7 // 7 days
               },
               cacheableResponse: {

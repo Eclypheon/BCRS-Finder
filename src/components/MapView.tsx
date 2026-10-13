@@ -12,6 +12,38 @@ interface MapViewProps {
   onClearFocus: () => void;
 }
 
+interface TileLayerConfig {
+  name: string;
+  url: string;
+  attribution: string;
+  maxZoom: number;
+  subdomains?: string;
+}
+
+const TILE_CONFIGS: Record<'onemap' | 'osm' | 'dark', TileLayerConfig> = {
+  onemap: {
+    name: 'OneMap SG',
+    url: 'https://www.onemap.gov.sg/maps/tiles/Default_HD/{z}/{x}/{y}.png',
+    attribution:
+      '<a href="https://www.onemap.gov.sg/" target="_blank" rel="noopener noreferrer">OneMap</a> &copy; <a href="https://www.sla.gov.sg/" target="_blank" rel="noopener noreferrer">Singapore Land Authority</a>',
+    maxZoom: 19,
+  },
+  osm: {
+    name: 'OpenStreetMap',
+    url: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
+    attribution:
+      '&copy; <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener noreferrer">OpenStreetMap</a> contributors',
+    maxZoom: 19,
+  },
+  dark: {
+    name: 'Dark Canvas',
+    url: 'https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_Base/MapServer/tile/{z}/{y}/{x}',
+    attribution:
+      '&copy; <a href="https://www.esri.com/" target="_blank" rel="noopener noreferrer">Esri</a>, HERE, Garmin',
+    maxZoom: 16,
+  },
+};
+
 export const MapView: React.FC<MapViewProps> = ({
   userLocation,
   rvms,
@@ -26,7 +58,7 @@ export const MapView: React.FC<MapViewProps> = ({
   const canvasRendererRef = useRef<L.Canvas | null>(null);
 
   const [activeFilter, setActiveFilter] = useState<FilterOption>('ALL');
-  const [mapStyle, setMapStyle] = useState<'voyager' | 'dark'>('voyager');
+  const [mapStyle, setMapStyle] = useState<'onemap' | 'osm' | 'dark'>('onemap');
 
   // Initialize Map
   useEffect(() => {
@@ -45,17 +77,11 @@ export const MapView: React.FC<MapViewProps> = ({
       preferCanvas: true,
     });
 
-    // Add CartoDB tile layer
-    const tileUrl =
-      mapStyle === 'dark'
-        ? 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png'
-        : 'https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png';
-
-    const tiles = L.tileLayer(tileUrl, {
-      maxZoom: 19,
-      subdomains: 'abcd',
-      attribution:
-        '&copy; <a href="https://carto.com/">CARTO</a> &copy; <a href="https://www.openstreetmap.org/copyright">OSM</a> | BCRS Singapore',
+    // Add free open-source tile layer (OneMap SG HD default)
+    const activeCfg = TILE_CONFIGS[mapStyle];
+    L.tileLayer(activeCfg.url, {
+      maxZoom: activeCfg.maxZoom,
+      attribution: activeCfg.attribution,
     }).addTo(map);
 
     // Zoom control in bottom right
@@ -87,16 +113,10 @@ export const MapView: React.FC<MapViewProps> = ({
       }
     });
 
-    const tileUrl =
-      mapStyle === 'dark'
-        ? 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png'
-        : 'https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png';
-
-    L.tileLayer(tileUrl, {
-      maxZoom: 19,
-      subdomains: 'abcd',
-      attribution:
-        '&copy; <a href="https://carto.com/">CARTO</a> &copy; <a href="https://www.openstreetmap.org/copyright">OSM</a> | BCRS Singapore',
+    const activeCfg = TILE_CONFIGS[mapStyle];
+    L.tileLayer(activeCfg.url, {
+      maxZoom: activeCfg.maxZoom,
+      attribution: activeCfg.attribution,
     }).addTo(map);
   }, [mapStyle]);
 
@@ -316,11 +336,14 @@ export const MapView: React.FC<MapViewProps> = ({
           <div className="flex items-center gap-1 p-1 bg-slate-900/90 backdrop-blur-md border border-slate-800 rounded-xl shadow-lg shrink-0">
             <button
               type="button"
-              onClick={() => setMapStyle((s) => (s === 'voyager' ? 'dark' : 'voyager'))}
-              title="Toggle Map Style"
-              className="p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 transition-colors cursor-pointer"
+              onClick={() =>
+                setMapStyle((s) => (s === 'onemap' ? 'osm' : s === 'osm' ? 'dark' : 'onemap'))
+              }
+              title={`Switch Basemap: currently ${TILE_CONFIGS[mapStyle].name}`}
+              className="inline-flex items-center gap-1 px-2 py-1 rounded-lg text-xs font-semibold text-slate-300 hover:text-white hover:bg-slate-800 transition-colors cursor-pointer"
             >
-              <Layers className="w-4 h-4" />
+              <Layers className="w-3.5 h-3.5 text-emerald-400" />
+              <span className="hidden sm:inline">{TILE_CONFIGS[mapStyle].name}</span>
             </button>
           </div>
         </div>
