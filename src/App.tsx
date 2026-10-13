@@ -1,13 +1,13 @@
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { RVM, UserLocation } from './types/rvm';
 import { fetchAllRVMs, fetchRvmBinStatus, geocodePostalCode } from './services/api';
-import { calculateDistanceMeters } from './utils/geo';
+import { calculateDistanceMeters, getMachineStatusInfo } from './utils/geo';
 import { SearchBox } from './components/SearchBox';
-import { TopThreeRVMs } from './components/TopThreeRVMs';
+import { NearestOperatingBin } from './components/NearestOperatingBin';
 import { MapView } from './components/MapView';
 import { NavigationModal } from './components/NavigationModal';
 import { PWAInstallBanner } from './components/PWAInstallBanner';
-import { RefreshCw, Recycle, Sparkles, AlertCircle, Wifi, WifiOff } from 'lucide-react';
+import { RefreshCw, Recycle, Sparkles, Wifi, WifiOff } from 'lucide-react';
 
 // Default Singapore Center (Alkaff Lakeview / Bidadari, central SG)
 const DEFAULT_SG_LOCATION: UserLocation = {
@@ -154,61 +154,47 @@ export const App: React.FC = () => {
     });
   }, [rvms, userLocation]);
 
-  // 5. Compute Top 3 Nearest Machines
-  const nearestRVMs = useMemo(() => {
-    if (!userLocation || rvmsWithDistance.length === 0) return [];
+  // 5. Compute #1 Nearest Operating Bin
+  const nearestOperatingRVM = useMemo(() => {
+    if (!userLocation || rvmsWithDistance.length === 0) return null;
 
-    return [...rvmsWithDistance]
-      .sort((a, b) => (a.distanceMeters || Infinity) - (b.distanceMeters || Infinity))
-      .slice(0, 3);
+    const operatingOnly = rvmsWithDistance.filter((rvm) => {
+      const statusInfo = getMachineStatusInfo(rvm);
+      return statusInfo.category === 'RUNNING';
+    });
+
+    return (
+      operatingOnly.sort(
+        (a, b) => (a.distanceMeters || Infinity) - (b.distanceMeters || Infinity)
+      )[0] || null
+    );
   }, [rvmsWithDistance, userLocation]);
 
-  // 6. Enrich Top 3 Machines with live bin telemetry
+  // 6. Enrich Nearest Operating Machine with live bin telemetry
   useEffect(() => {
-    if (nearestRVMs.length === 0) return;
+    if (!nearestOperatingRVM) return;
 
     let isMounted = true;
-    const enrichNearest = async () => {
-      const updates = await Promise.all(
-        nearestRVMs.map(async (rvm) => {
-          try {
-            const binItems = await fetchRvmBinStatus(rvm.id);
-            if (binItems && binItems.length > 0) {
-              const maxPct = Math.max(
-                ...binItems.map((b) => (typeof b.threshold_level === 'number' ? b.threshold_level : 0))
-              );
-              return { id: rvm.id, binItems, maxPct };
-            }
-          } catch (_) {}
-          return null;
-        })
-      );
-
-      if (!isMounted) return;
-
-      const validUpdates = updates.filter(Boolean);
-      if (validUpdates.length > 0) {
-        setRvms((prev) =>
-          prev.map((item) => {
-            const found = validUpdates.find((u) => u?.id === item.id);
-            if (found) {
-              return {
-                ...item,
-                binStatusDetails: found.binItems,
-                binFillPct: found.maxPct,
-              };
-            }
-            return item;
-          })
+    fetchRvmBinStatus(nearestOperatingRVM.id)
+      .then((binItems) => {
+        if (!isMounted || !binItems || binItems.length === 0) return;
+        const maxPct = Math.max(
+          ...binItems.map((b) => (typeof b.threshold_level === 'number' ? b.threshold_level : 0))
         );
-      }
-    };
+        setRvms((prev) =>
+          prev.map((item) =>
+            item.id === nearestOperatingRVM.id
+              ? { ...item, binStatusDetails: binItems, binFillPct: maxPct }
+              : item
+          )
+        );
+      })
+      .catch(() => {});
 
-    enrichNearest();
     return () => {
       isMounted = false;
     };
-  }, [nearestRVMs.map((r) => r.id).join(',')]);
+  }, [nearestOperatingRVM?.id]);
 
   // Focus on map handler
   const handleFocusRVMOnMap = (rvm: RVM) => {
@@ -277,9 +263,9 @@ export const App: React.FC = () => {
 
       {/* Main Container */}
       <div className="flex-1 flex flex-col min-h-0 relative">
-        {/* TOP SECTION: Search Box + Top 3 Nearest Machines */}
-        <div className="shrink-0 z-10 px-3 sm:px-6 pt-2.5 pb-2 space-y-2 bg-gradient-to-b from-slate-950 via-slate-950/90 to-transparent">
-          {/* 1. Search Box (Postal Code + Live Location) */}
+        {/* TOP SECTION: Search Box + #1 Nearest Operating Bin */}
+        <div className="shrink-0 z-10 px-3 sm:px-6 pt-2 pb-1.5 space-y-1.5 bg-gradient-to-b from-slate-950 via-slate-950/90 to-transparent">
+          {/* 1. Compact Search Box (Postal Code + Find + GPS in 1 line) */}
           <SearchBox
             userLocation={userLocation}
             onSearchPostal={handleSearchPostal}
@@ -290,11 +276,11 @@ export const App: React.FC = () => {
             onClearError={() => setErrorMessage(null)}
           />
 
-          {/* 2. Top 3 Nearest Machines (Compact) */}
-          <TopThreeRVMs
-            nearestRVMs={nearestRVMs}
-            onSelectRVM={(rvm) => setSelectedRVM(rvm)}
-            onFocusRVMOnMap={handleFocusRVMOnMap}
+          {/* 2. #1 Nearest In-Operation Bin with Instant 1-Click Navigation Icons */}
+          <NearestOperatingBin
+            rvm={nearestOperatingRVM}
+            userLocation={userLocation}
+            onFocusOnMap={handleFocusRVMOnMap}
           />
         </div>
 

@@ -1,4 +1,4 @@
-export type RvmStatusCategory = 'RUNNING' | 'FILLING_FAST' | 'FULL' | 'OFFLINE';
+export type RvmStatusCategory = 'RUNNING' | 'FULL' | 'OFFLINE';
 
 export interface RVM {
   id: number;
@@ -48,4 +48,4 @@ export interface StatusStyleInfo {
   dotClass: string;
 }
 
-export type FilterOption = 'ALL' | 'RUNNING' | 'FILLING_FAST' | 'FULL' | 'OFFLINE';
+export type FilterOption = 'ALL' | 'RUNNING' | 'FULL';

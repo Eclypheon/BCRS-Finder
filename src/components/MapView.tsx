@@ -188,21 +188,18 @@ export const MapView: React.FC<MapViewProps> = ({
       const statusInfo = getMachineStatusInfo(rvm);
       if (activeFilter === 'ALL') return true;
       if (activeFilter === 'RUNNING') return statusInfo.category === 'RUNNING';
-      if (activeFilter === 'FILLING_FAST') return statusInfo.category === 'FILLING_FAST';
       if (activeFilter === 'FULL') return statusInfo.category === 'FULL';
-      if (activeFilter === 'OFFLINE') return statusInfo.category === 'OFFLINE';
       return true;
     });
 
     filtered.forEach((rvm) => {
       const statusInfo = getMachineStatusInfo(rvm);
       const isFull = statusInfo.category === 'FULL';
-      const isFillingFast = statusInfo.category === 'FILLING_FAST';
 
-      // Colored dot marker
+      // Colored dot marker: Green (In Operation) or Red (Bin Full)
       const circle = L.circleMarker([rvm.latitude, rvm.longitude], {
         renderer: canvas,
-        radius: isFull ? 8 : isFillingFast ? 7.5 : 6.5,
+        radius: isFull ? 7.5 : 6.5,
         fillColor: statusInfo.hex,
         color: '#0f172a',
         weight: 1.5,
@@ -251,17 +248,15 @@ export const MapView: React.FC<MapViewProps> = ({
   // Status Counts for Legend
   const counts = React.useMemo(() => {
     let running = 0;
-    let filling = 0;
     let full = 0;
     let offline = 0;
     for (const rvm of rvms) {
       const s = getMachineStatusInfo(rvm).category;
       if (s === 'RUNNING') running++;
-      else if (s === 'FILLING_FAST') filling++;
       else if (s === 'FULL') full++;
       else if (s === 'OFFLINE') offline++;
     }
-    return { all: rvms.length, running, filling, full, offline };
+    return { all: rvms.length, running, full, offline };
   }, [rvms]);
 
   return (
@@ -299,21 +294,6 @@ export const MapView: React.FC<MapViewProps> = ({
               <span className="w-2 h-2 rounded-full bg-emerald-400"></span>
               <span>In Operation</span>
               <span className="opacity-80 font-normal">({counts.running})</span>
-            </button>
-
-            {/* Yellow: Filling Fast */}
-            <button
-              type="button"
-              onClick={() => setActiveFilter('FILLING_FAST')}
-              className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-bold transition-all cursor-pointer ${
-                activeFilter === 'FILLING_FAST'
-                  ? 'bg-amber-600 text-white shadow'
-                  : 'text-amber-400 hover:bg-amber-950/40'
-              }`}
-            >
-              <span className="w-2 h-2 rounded-full bg-amber-400"></span>
-              <span>Filling Fast</span>
-              {counts.filling > 0 && <span className="opacity-80 font-normal">({counts.filling})</span>}
             </button>
 
             {/* Red: Bin Full */}
@@ -368,11 +348,7 @@ export const MapView: React.FC<MapViewProps> = ({
         <div className="bg-slate-900/90 backdrop-blur-md border border-slate-800 rounded-xl px-3 py-1.5 text-[11px] text-slate-300 shadow-lg flex items-center gap-3">
           <div className="flex items-center gap-1.5">
             <span className="w-2.5 h-2.5 rounded-full bg-emerald-500"></span>
-            <span>Operating</span>
-          </div>
-          <div className="flex items-center gap-1.5">
-            <span className="w-2.5 h-2.5 rounded-full bg-amber-400"></span>
-            <span>Filling Fast</span>
+            <span>In Operation</span>
           </div>
           <div className="flex items-center gap-1.5">
             <span className="w-2.5 h-2.5 rounded-full bg-rose-500"></span>

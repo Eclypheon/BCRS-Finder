@@ -135,29 +135,17 @@ export const NavigationModal: React.FC<NavigationModalProps> = ({
               </div>
             </div>
 
-            {/* Quick Metrics (Distance, Walk Time, Bin Capacity) */}
-            <div className="grid grid-cols-3 gap-2 pt-2 border-t border-slate-700/60 text-center">
+            {/* Quick Metrics (Distance & Walk Time) */}
+            <div className="grid grid-cols-2 gap-2 pt-2 border-t border-slate-700/60 text-center">
               <div className="p-2 rounded-xl bg-slate-900/60 border border-slate-800">
                 <div className="text-[11px] text-slate-400">Distance</div>
                 <div className="text-sm font-bold text-emerald-400">{distanceStr}</div>
               </div>
               <div className="p-2 rounded-xl bg-slate-900/60 border border-slate-800">
                 <div className="text-[11px] text-slate-400 flex items-center justify-center gap-1">
-                  <Footprints className="w-3 h-3 text-slate-400" /> Walk
+                  <Footprints className="w-3 h-3 text-slate-400" /> Walking Time
                 </div>
                 <div className="text-sm font-bold text-slate-200">~{walkMinutes} mins</div>
-              </div>
-              <div className="p-2 rounded-xl bg-slate-900/60 border border-slate-800">
-                <div className="text-[11px] text-slate-400 flex items-center justify-center gap-1">
-                  <Gauge className="w-3 h-3 text-slate-400" /> Bin Fill
-                </div>
-                <div className="text-sm font-bold text-slate-200">
-                  {rvm.binFillPct !== null && rvm.binFillPct !== undefined
-                    ? `${rvm.binFillPct}%`
-                    : statusInfo.category === 'FULL'
-                    ? '100%'
-                    : 'Normal'}
-                </div>
               </div>
             </div>
 

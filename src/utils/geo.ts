@@ -84,25 +84,10 @@ export function getMachineStatusInfo(rvm: RVM, binItems?: BinStatusItem[]): Stat
     };
   }
 
-  // 3. Yellow = Filling Fast (Operating, but bin threshold > 70% and < 100%)
-  if (maxThreshold !== null && maxThreshold >= 70 && maxThreshold < 100) {
-    return {
-      category: 'FILLING_FAST',
-      label: `Filling Fast (${maxThreshold}%)`,
-      colorName: 'yellow',
-      hex: '#eab308',
-      bgClass: 'bg-amber-500/15 text-amber-300 border-amber-500/30',
-      textClass: 'text-amber-400',
-      borderClass: 'border-amber-500',
-      ringClass: 'ring-amber-500/50',
-      dotClass: 'bg-amber-400'
-    };
-  }
-
-  // 4. Green = In Operation
+  // 3. Green = In Operation
   return {
     category: 'RUNNING',
-    label: maxThreshold !== null ? `In Operation (${maxThreshold}%)` : 'In Operation',
+    label: 'In Operation',
     colorName: 'green',
     hex: '#10b981',
     bgClass: 'bg-emerald-500/15 text-emerald-400 border-emerald-500/30',
