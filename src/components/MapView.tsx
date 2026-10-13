@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState, useCallback } from 'react';
 import L from 'leaflet';
 import { RVM, UserLocation, FilterOption } from '../types/rvm';
-import { getMachineStatusInfo, formatDistance, calculateBearingDegrees } from '../utils/geo';
+import { getMachineStatusInfo, calculateBearingDegrees } from '../utils/geo';
 import { fetchWalkingRoute, WalkingRouteResult } from '../services/routing';
 import { Compass, Locate, Filter, Layers } from 'lucide-react';
 
@@ -388,30 +388,6 @@ export const MapView: React.FC<MapViewProps> = ({
         opacity: 1,
         fillOpacity: 0.95,
         interactive: true,
-      });
-
-      // Tooltip with clean details and tap hint
-      const distanceText = rvm.distanceMeters !== undefined ? formatDistance(rvm.distanceMeters) : '';
-      const actionHint = isTarget
-        ? 'Tap again to open navigation options'
-        : 'Tap once to route walking path here';
-
-      const tooltipContent = `
-        <div class="p-1 min-w-[160px] text-slate-900">
-          <div class="font-bold text-xs truncate leading-tight">${rvm.locationName}</div>
-          <div class="flex items-center gap-1.5 mt-1">
-            <span class="inline-block w-2 h-2 rounded-full" style="background-color: ${isTarget ? '#38bdf8' : statusInfo.hex}"></span>
-            <span class="text-[11px] font-semibold">${isTarget ? 'Routed Target' : statusInfo.label}</span>
-            ${distanceText ? `<span class="text-[11px] text-slate-500 font-bold ml-auto">${distanceText}</span>` : ''}
-          </div>
-          <div class="text-[10px] text-blue-600 font-medium mt-1">${actionHint}</div>
-        </div>
-      `;
-
-      circle.bindTooltip(tooltipContent, {
-        direction: 'top',
-        offset: [0, -6],
-        className: 'rvm-map-tooltip',
       });
 
       // Clicking / tapping on dot triggers 1st-tap route or 2nd-tap modal
