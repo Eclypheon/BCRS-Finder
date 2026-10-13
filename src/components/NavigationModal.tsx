@@ -79,8 +79,8 @@ export const NavigationModal: React.FC<NavigationModalProps> = ({
       {/* Backdrop click dismiss */}
       <div className="absolute inset-0" onClick={onClose} />
 
-      {/* Modal Card */}
-      <div className="relative w-full max-w-lg bg-slate-900 border border-slate-800 rounded-t-3xl sm:rounded-3xl shadow-2xl overflow-hidden z-10 max-h-[92vh] flex flex-col animate-in slide-in-from-bottom-6 duration-200">
+      {/* Modal Card - safe from Dynamic Island and iOS home bar */}
+      <div className="relative w-full max-w-lg bg-slate-900 border border-slate-800 rounded-t-3xl sm:rounded-3xl shadow-2xl overflow-hidden z-10 max-h-[92vh] max-h-[calc(100dvh-max(env(safe-area-inset-top,0px),24px))] flex flex-col animate-in slide-in-from-bottom-6 duration-200">
         {/* Header bar */}
         <div className="flex items-center justify-between px-5 pt-4 pb-3 border-b border-slate-800">
           <div className="flex items-center gap-2">
@@ -272,8 +272,8 @@ export const NavigationModal: React.FC<NavigationModalProps> = ({
           </div>
         </div>
 
-        {/* Footer Actions */}
-        <div className="p-4 bg-slate-950/80 border-t border-slate-800 flex items-center justify-between gap-2">
+        {/* Footer Actions - with iOS home bar safe area padding */}
+        <div className="p-4 pb-[max(env(safe-area-inset-bottom,0px),1rem)] bg-slate-950/80 border-t border-slate-800 flex items-center justify-between gap-2">
           <div className="flex items-center gap-2">
             <button
               type="button"

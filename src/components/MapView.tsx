@@ -351,7 +351,7 @@ export const MapView: React.FC<MapViewProps> = ({
 
       {/* Floating Recenter Button */}
       {userLocation && (
-        <div className="absolute bottom-6 left-4 z-[500]">
+        <div className="absolute bottom-[max(env(safe-area-inset-bottom,0px),1rem)] left-4 z-[500]">
           <button
             type="button"
             onClick={handleRecenter}
@@ -364,7 +364,7 @@ export const MapView: React.FC<MapViewProps> = ({
       )}
 
       {/* Map Legend Overlay */}
-      <div className="absolute bottom-6 right-16 z-[500] hidden sm:block pointer-events-none">
+      <div className="absolute bottom-[max(env(safe-area-inset-bottom,0px),1rem)] right-16 z-[500] hidden sm:block pointer-events-none">
         <div className="bg-slate-900/90 backdrop-blur-md border border-slate-800 rounded-xl px-3 py-1.5 text-[11px] text-slate-300 shadow-lg flex items-center gap-3">
           <div className="flex items-center gap-1.5">
             <span className="w-2.5 h-2.5 rounded-full bg-emerald-500"></span>

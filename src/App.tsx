@@ -216,9 +216,9 @@ export const App: React.FC = () => {
   };
 
   return (
-    <div className="flex flex-col h-screen w-screen bg-slate-950 text-slate-100 overflow-hidden font-sans">
-      {/* Top Header Navbar */}
-      <header className="shrink-0 z-20 bg-slate-900/90 backdrop-blur-md border-b border-slate-800 px-3 sm:px-6 py-2.5 flex items-center justify-between shadow-sm">
+    <div className="flex flex-col h-screen h-[100dvh] w-screen bg-slate-950 text-slate-100 overflow-hidden font-sans">
+      {/* Top Header Navbar - with iPhone Dynamic Island / notch safe area */}
+      <header className="shrink-0 z-20 bg-slate-900/95 backdrop-blur-md border-b border-slate-800 px-3 sm:px-6 pb-2.5 pt-[max(env(safe-area-inset-top,0px),0.625rem)] pl-[max(env(safe-area-inset-left,0px),0.75rem)] pr-[max(env(safe-area-inset-right,0px),0.75rem)] flex items-center justify-between shadow-sm">
         <div className="flex items-center gap-2.5">
           {/* Logo */}
           <div className="w-8 h-8 rounded-xl bg-gradient-to-tr from-emerald-600 to-teal-500 p-0.5 shadow-md shadow-emerald-900/30 flex items-center justify-center">
@@ -299,7 +299,7 @@ export const App: React.FC = () => {
         </div>
 
         {/* BOTTOM SECTION: Map Centered on Location */}
-        <div className="flex-1 min-h-0 px-3 sm:px-6 pb-3 pt-0">
+        <div className="flex-1 min-h-0 px-3 sm:px-6 pb-[max(env(safe-area-inset-bottom,0px),0.75rem)] pt-0">
           <MapView
             userLocation={userLocation}
             rvms={rvmsWithDistance}
