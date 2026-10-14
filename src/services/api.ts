@@ -12,6 +12,9 @@ export interface GeocodeResult {
   postal: string;
 }
 
+const DEFAULT_EDGE_PROXY = 'https://bcrs-finder-proxy.kester-neo.workers.dev';
+const getEdgeProxyBase = () => (import.meta.env.VITE_BCRS_PROXY_URL || DEFAULT_EDGE_PROXY).replace(/\/$/, '');
+
 // Fetch all Singapore BCRS RVMs with multi-layer resilience and real-time refresh support
 export async function fetchAllRVMs(forceRefresh = false): Promise<RVM[]> {
   // If force refresh, clear local storage cache immediately
@@ -40,7 +43,7 @@ export async function fetchAllRVMs(forceRefresh = false): Promise<RVM[]> {
   }
 
   // 1. Try Live Edge Proxy / Backend API (Real-time on-demand sync)
-  const edgeProxyBase = (import.meta.env.VITE_BCRS_PROXY_URL || '').replace(/\/$/, '');
+  const edgeProxyBase = getEdgeProxyBase();
   const proxyEndpoints = [
     edgeProxyBase ? `${edgeProxyBase}/api/rvms${forceRefresh ? '?refresh=true' : ''}` : null,
     edgeProxyBase ? `${edgeProxyBase}${forceRefresh ? '?refresh=true' : ''}` : null,
@@ -120,7 +123,7 @@ export async function fetchAllRVMs(forceRefresh = false): Promise<RVM[]> {
 
 // Fetch bin status for an individual RVM
 export async function fetchRvmBinStatus(rvmId: number): Promise<BinStatusItem[]> {
-  const edgeProxyBase = (import.meta.env.VITE_BCRS_PROXY_URL || '').replace(/\/$/, '');
+  const edgeProxyBase = getEdgeProxyBase();
   const endpoints = [
     edgeProxyBase ? `${edgeProxyBase}/api/rvms/${rvmId}/bin-status` : null,
     edgeProxyBase ? `${edgeProxyBase}/api/bin-status?id=${rvmId}` : null,
