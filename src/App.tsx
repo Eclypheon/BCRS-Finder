@@ -31,6 +31,7 @@ export const App: React.FC = () => {
   const [modalRVM, setModalRVM] = useState<RVM | null>(null);
   const [focusedRVM, setFocusedRVM] = useState<RVM | null>(null);
   const [isOnline, setIsOnline] = useState(navigator.onLine);
+  const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
 
   // Monitor online status
   useEffect(() => {
@@ -57,6 +58,7 @@ export const App: React.FC = () => {
     try {
       const data = await fetchAllRVMs(forceRefresh);
       setRvms(data);
+      setLastUpdated(new Date());
     } catch (err: any) {
       console.error('Failed to load RVMs:', err);
       setErrorMessage('Could not load BCRS machines. Using cached data.');
@@ -254,8 +256,12 @@ export const App: React.FC = () => {
             type="button"
             onClick={() => loadRvms(true)}
             disabled={isRefreshing || isLoadingRvms}
-            title="Refresh Live Status"
-            className="p-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white border border-slate-700 transition-colors disabled:opacity-50 cursor-pointer"
+            title={
+              lastUpdated
+                ? `Last synced: ${lastUpdated.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })} • Click to re-sync`
+                : 'Refresh Live Status'
+            }
+            className="p-2 rounded-xl bg-slate-800 hover:bg-slate-700 active:bg-slate-600 text-slate-300 hover:text-white border border-slate-700 transition-colors disabled:opacity-50 cursor-pointer"
           >
             <RefreshCw className={`w-3.5 h-3.5 ${isRefreshing ? 'animate-spin text-emerald-400' : ''}`} />
           </button>

@@ -1,8 +1,8 @@
 import { RVM, BinStatusItem } from '../types/rvm';
 import fallbackSeed from '../data/seed-rvms.json';
 
-const LOCAL_STORAGE_RVM_KEY = 'bcrs_rvms_cache_v1';
-const LOCAL_STORAGE_TIMESTAMP_KEY = 'bcrs_rvms_cache_time';
+const LOCAL_STORAGE_RVM_KEY = 'bcrs_rvms_cache_v2';
+const LOCAL_STORAGE_TIMESTAMP_KEY = 'bcrs_rvms_cache_time_v2';
 
 export interface GeocodeResult {
   latitude: number;
@@ -12,16 +12,22 @@ export interface GeocodeResult {
   postal: string;
 }
 
-// Fetch all Singapore BCRS RVMs with multi-layer resilience
+// Fetch all Singapore BCRS RVMs with multi-layer resilience and real-time refresh support
 export async function fetchAllRVMs(forceRefresh = false): Promise<RVM[]> {
-  // Check local cache first unless force refresh
-  if (!forceRefresh) {
+  // If force refresh, clear local storage cache immediately
+  if (forceRefresh) {
+    try {
+      localStorage.removeItem(LOCAL_STORAGE_RVM_KEY);
+      localStorage.removeItem(LOCAL_STORAGE_TIMESTAMP_KEY);
+    } catch (_) {}
+  } else {
+    // Check local cache (valid for 2 minutes)
     try {
       const cachedTime = localStorage.getItem(LOCAL_STORAGE_TIMESTAMP_KEY);
       const cachedData = localStorage.getItem(LOCAL_STORAGE_RVM_KEY);
       if (cachedTime && cachedData) {
         const ageMs = Date.now() - parseInt(cachedTime, 10);
-        if (ageMs < 1000 * 60 * 5) { // 5 minutes cache
+        if (ageMs < 1000 * 60 * 2) {
           const parsed = JSON.parse(cachedData);
           if (Array.isArray(parsed) && parsed.length > 0) {
             return parsed;
@@ -33,11 +39,15 @@ export async function fetchAllRVMs(forceRefresh = false): Promise<RVM[]> {
     }
   }
 
-  // 1. Try local Express API / proxy
+  // 1. Try local Express API / proxy (when running full server)
   try {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 2000);
     const res = await fetch(`/api/rvms${forceRefresh ? '?refresh=true' : ''}`, {
-      headers: { 'Accept': 'application/json' }
+      headers: { Accept: 'application/json' },
+      signal: controller.signal,
     });
+    clearTimeout(timeoutId);
     if (res.ok) {
       const json = await res.json();
       if (json && json.status === 'ok' && Array.isArray(json.data) && json.data.length > 0) {
@@ -48,26 +58,54 @@ export async function fetchAllRVMs(forceRefresh = false): Promise<RVM[]> {
         return json.data;
       }
     }
-  } catch (err) {
-    console.info('Proxy API not reachable, attempting public static data...');
+  } catch (_) {
+    // Expected on GitHub Pages static deployment
   }
 
-  // 2. Try static public JSON
+  // 2. Fetch fresh static JSON (with cache busting and no-store on refresh)
   try {
     const base = import.meta.env.BASE_URL || '/';
-    const seedUrl = `${base.replace(/\/$/, '')}/data/seed-rvms.json`;
-    const res = await fetch(seedUrl);
+    const cleanBase = base.replace(/\/$/, '');
+    const seedUrl = `${cleanBase}/data/seed-rvms.json${forceRefresh ? `?t=${Date.now()}` : ''}`;
+    const res = await fetch(seedUrl, {
+      cache: forceRefresh ? 'no-store' : 'default',
+      headers: {
+        'Cache-Control': forceRefresh ? 'no-cache, no-store, must-revalidate' : 'default',
+      },
+    });
     if (res.ok) {
       const data = await res.json();
       if (Array.isArray(data) && data.length > 0) {
+        try {
+          localStorage.setItem(LOCAL_STORAGE_RVM_KEY, JSON.stringify(data));
+          localStorage.setItem(LOCAL_STORAGE_TIMESTAMP_KEY, Date.now().toString());
+        } catch (_) {}
         return data;
       }
     }
   } catch (err) {
-    console.info('Static seed fetch failed, falling back to bundled data...');
+    console.info('Local seed fetch failed, trying GitHub raw backup...');
   }
 
-  // 3. Fallback to bundled import
+  // 3. Fallback to GitHub Raw CDN (CORS enabled, bypasses host)
+  try {
+    const rawUrl = `https://raw.githubusercontent.com/Eclypheon/BCRS-Finder/main/public/data/seed-rvms.json${forceRefresh ? `?t=${Date.now()}` : ''}`;
+    const res = await fetch(rawUrl, {
+      cache: forceRefresh ? 'no-store' : 'default',
+    });
+    if (res.ok) {
+      const data = await res.json();
+      if (Array.isArray(data) && data.length > 0) {
+        try {
+          localStorage.setItem(LOCAL_STORAGE_RVM_KEY, JSON.stringify(data));
+          localStorage.setItem(LOCAL_STORAGE_TIMESTAMP_KEY, Date.now().toString());
+        } catch (_) {}
+        return data;
+      }
+    }
+  } catch (_) {}
+
+  // 4. Fallback to bundled import
   return fallbackSeed as unknown as RVM[];
 }
 

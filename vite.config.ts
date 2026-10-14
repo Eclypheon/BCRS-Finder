@@ -11,7 +11,7 @@ export default defineConfig({
     VitePWA({
       registerType: 'autoUpdate',
       base: '/BCRS-Finder/',
-      includeAssets: ['favicon.svg', 'pwa-192x192.png', 'pwa-512x512.png', 'data/seed-rvms.json'],
+      includeAssets: ['favicon.svg', 'pwa-192x192.png', 'pwa-512x512.png'],
       manifest: {
         name: 'BCRS Finder - Singapore',
         short_name: 'BCRS Finder',
@@ -43,8 +43,23 @@ export default defineConfig({
         ]
       },
       workbox: {
-        globPatterns: ['**/*.{js,css,html,ico,png,svg,json}'],
+        globPatterns: ['**/*.{js,css,html,ico,png,svg}'],
         runtimeCaching: [
+          {
+            urlPattern: /.*\/data\/seed-rvms\.json.*/i,
+            handler: 'NetworkFirst',
+            options: {
+              cacheName: 'bcrs-seed-data-cache',
+              networkTimeoutSeconds: 3,
+              expiration: {
+                maxEntries: 2,
+                maxAgeSeconds: 60 * 3, // 3 minutes
+              },
+              cacheableResponse: {
+                statuses: [0, 200],
+              },
+            },
+          },
           {
             urlPattern: /^https:\/\/www\.onemap\.gov\.sg\/maps\/tiles\/.*/i,
             handler: 'CacheFirst',
