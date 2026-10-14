@@ -55,6 +55,7 @@ export const App: React.FC = () => {
     if (forceRefresh) setIsRefreshing(true);
     else setIsLoadingRvms(true);
 
+    const startTime = Date.now();
     try {
       const data = await fetchAllRVMs(forceRefresh);
       setRvms(data);
@@ -63,6 +64,12 @@ export const App: React.FC = () => {
       console.error('Failed to load RVMs:', err);
       setErrorMessage('Could not load BCRS machines. Using cached data.');
     } finally {
+      if (forceRefresh) {
+        const elapsed = Date.now() - startTime;
+        if (elapsed < 500) {
+          await new Promise((resolve) => setTimeout(resolve, 500 - elapsed));
+        }
+      }
       setIsLoadingRvms(false);
       setIsRefreshing(false);
     }

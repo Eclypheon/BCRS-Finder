@@ -2,7 +2,8 @@ name: Deploy to GitHub Pages
 
 on:
   schedule:
-    - cron: '*/5 * * * *' # Auto-sync live statuses from bts.bcrs.sg every 5 minutes
+    # Run every 5 minutes with offset minutes (2, 7, 12...) to avoid peak-minute runner congestion
+    - cron: '2,7,12,17,22,27,32,37,42,47,52,57 * * * *'
   push:
     branches:
       - main
