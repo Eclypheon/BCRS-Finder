@@ -40,6 +40,12 @@ export const NavigationModal: React.FC<NavigationModalProps> = ({
   const statusInfo = getMachineStatusInfo(rvm);
   const distanceStr = formatDistance(rvm.distanceMeters);
   const walkMinutes = estimateWalkMinutes(rvm.distanceMeters);
+  const fillPct =
+    typeof rvm.binFillPct === 'number'
+      ? rvm.binFillPct
+      : typeof rvm.binStatusDetails?.[0]?.threshold_level === 'number'
+      ? rvm.binStatusDetails[0].threshold_level
+      : null;
   const telemetryTime =
     rvm.last_updated ||
     rvm.binStatusDetails?.find((b) => b.last_updated)?.last_updated ||
@@ -138,7 +144,13 @@ export const NavigationModal: React.FC<NavigationModalProps> = ({
                     className="w-2 h-2 rounded-full shrink-0 animate-pulse"
                     style={{ backgroundColor: statusInfo.hex }}
                   />
-                  <span>{statusInfo.label}</span>
+                  <span>
+                    {statusInfo.category === 'FULL' || fillPct === 100
+                      ? 'Bin Full (100%)'
+                      : fillPct !== null
+                      ? `${statusInfo.label} (${fillPct}%)`
+                      : statusInfo.label}
+                  </span>
                 </div>
                 {formattedTimestamp && (
                   <span className="text-[10px] text-slate-400 font-medium">
@@ -161,6 +173,61 @@ export const NavigationModal: React.FC<NavigationModalProps> = ({
                 <div className="text-sm font-bold text-slate-200">~{walkMinutes} mins</div>
               </div>
             </div>
+
+            {/* Live Bin Fill Level / Capacity Bar */}
+            {fillPct !== null && (
+              <div className="p-3 rounded-xl bg-slate-900/60 border border-slate-800 space-y-2">
+                <div className="flex items-center justify-between text-xs">
+                  <span className="text-slate-300 font-bold flex items-center gap-1.5">
+                    <span
+                      className={`w-2 h-2 rounded-full ${
+                        fillPct >= 100
+                          ? 'bg-rose-500 animate-pulse'
+                          : fillPct >= 80
+                          ? 'bg-amber-400'
+                          : 'bg-emerald-400'
+                      }`}
+                    />
+                    Current Bin Capacity
+                  </span>
+                  <span
+                    className={`font-black text-xs ${
+                      fillPct >= 100
+                        ? 'text-rose-400'
+                        : fillPct >= 80
+                        ? 'text-amber-400'
+                        : 'text-emerald-400'
+                    }`}
+                  >
+                    {fillPct}% Full
+                  </span>
+                </div>
+                <div className="w-full h-2 rounded-full bg-slate-800 overflow-hidden">
+                  <div
+                    className={`h-full rounded-full transition-all duration-500 ${
+                      fillPct >= 100
+                        ? 'bg-rose-500'
+                        : fillPct >= 80
+                        ? 'bg-amber-400'
+                        : 'bg-emerald-500'
+                    }`}
+                    style={{ width: `${Math.min(100, Math.max(0, fillPct))}%` }}
+                  />
+                </div>
+                {rvm.binStatusDetails && rvm.binStatusDetails.length > 0 && (
+                  <div className="flex items-center justify-between text-[11px] text-slate-400 pt-0.5">
+                    <span>
+                      Compartment: {rvm.binStatusDetails.map((b) => b.compartment_type).filter(Boolean).join(', ')}
+                    </span>
+                    {rvm.binStatusDetails[0]?.threshold_level !== undefined && (
+                      <span className="text-slate-400 font-mono text-[10px]">
+                        Sensor threshold: {rvm.binStatusDetails[0].threshold_level}%
+                      </span>
+                    )}
+                  </div>
+                )}
+              </div>
+            )}
 
             {/* Hours & Remarks */}
             <div className="space-y-1.5 text-xs text-slate-300 pt-1">

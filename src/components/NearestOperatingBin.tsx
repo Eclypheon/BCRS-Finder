@@ -6,6 +6,7 @@ import {
   getNavigationLinks,
   launchNavigation,
   formatSingaporeDateTime,
+  getMachineStatusInfo,
 } from '../utils/geo';
 import { Footprints, MapPin, Compass, Clock } from 'lucide-react';
 
@@ -33,6 +34,14 @@ export const NearestOperatingBin: React.FC<NearestOperatingBinProps> = ({
       </div>
     );
   }
+
+  const statusInfo = getMachineStatusInfo(rvm);
+  const fillPct =
+    typeof rvm.binFillPct === 'number'
+      ? rvm.binFillPct
+      : typeof rvm.binStatusDetails?.[0]?.threshold_level === 'number'
+      ? rvm.binStatusDetails[0].threshold_level
+      : null;
 
   const distanceStr = formatDistance(rvm.distanceMeters);
   const walkMinutes = estimateWalkMinutes(rvm.distanceMeters);
@@ -71,6 +80,39 @@ export const NearestOperatingBin: React.FC<NearestOperatingBinProps> = ({
               </span>
             )}
 
+            {/* Capacity / Status Pill */}
+            {statusInfo.category === 'FULL' || fillPct === 100 ? (
+              <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md bg-rose-500/20 text-rose-300 border border-rose-500/40 text-[10px] font-black uppercase tracking-wider shrink-0">
+                <span className="w-1.5 h-1.5 rounded-full bg-rose-500 animate-pulse"></span>
+                Bin Full (100%)
+              </span>
+            ) : statusInfo.category === 'OFFLINE' ? (
+              <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md bg-slate-500/20 text-slate-300 border border-slate-500/40 text-[10px] font-black uppercase tracking-wider shrink-0">
+                <span className="w-1.5 h-1.5 rounded-full bg-slate-400"></span>
+                {statusInfo.label}
+              </span>
+            ) : fillPct !== null ? (
+              <span
+                className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md text-[10px] font-black uppercase tracking-wider shrink-0 border ${
+                  fillPct >= 80
+                    ? 'bg-amber-500/20 text-amber-300 border-amber-500/40'
+                    : 'bg-emerald-500/15 text-emerald-300 border-emerald-500/30'
+                }`}
+              >
+                <span
+                  className={`w-1.5 h-1.5 rounded-full ${
+                    fillPct >= 80 ? 'bg-amber-400' : 'bg-emerald-400'
+                  }`}
+                ></span>
+                {fillPct}% Full
+              </span>
+            ) : isSyncingTelemetry ? (
+              <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md bg-slate-800 text-slate-400 border border-slate-700/80 text-[10px] font-medium shrink-0">
+                <Clock className="w-2.5 h-2.5 text-emerald-400 animate-spin" />
+                Checking fill...
+              </span>
+            ) : null}
+
             {isCustomSelected && onResetToNearest && (
               <button
                 type="button"
@@ -97,7 +139,7 @@ export const NearestOperatingBin: React.FC<NearestOperatingBinProps> = ({
             {rvm.locationName}
           </h2>
 
-          {/* Metrics Subline: Distance, Walk Time, Postal & Data Timestamp on the same line */}
+          {/* Metrics Subline: Distance, Walk Time, Postal, Fill %, & Data Timestamp */}
           <div className="flex items-center gap-1.5 sm:gap-2 mt-1 text-xs text-slate-300 flex-wrap">
             <span className="flex items-center gap-1 font-bold text-emerald-400">
               <MapPin className="w-3.5 h-3.5 shrink-0" />
@@ -116,6 +158,33 @@ export const NearestOperatingBin: React.FC<NearestOperatingBinProps> = ({
                 <span className="text-slate-600 hidden xs:inline">•</span>
                 <span className="text-slate-400 font-mono text-[11px] hidden xs:inline">
                   SG {rvm.postalCode}
+                </span>
+              </>
+            )}
+
+            {/* Live Bin Fill Level */}
+            {fillPct !== null && (
+              <>
+                <span className="text-slate-600">•</span>
+                <span
+                  className={`flex items-center gap-1 font-bold ${
+                    fillPct >= 100
+                      ? 'text-rose-400'
+                      : fillPct >= 80
+                      ? 'text-amber-300'
+                      : 'text-emerald-300'
+                  }`}
+                >
+                  <span
+                    className={`w-1.5 h-1.5 rounded-full shrink-0 ${
+                      fillPct >= 100
+                        ? 'bg-rose-500 animate-pulse'
+                        : fillPct >= 80
+                        ? 'bg-amber-400'
+                        : 'bg-emerald-400'
+                    }`}
+                  />
+                  <span>{fillPct}% full</span>
                 </span>
               </>
             )}
