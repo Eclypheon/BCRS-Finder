@@ -335,6 +335,7 @@ export const App: React.FC = () => {
         address: result.address,
         isLiveGps: false,
       });
+      setSelectedRvmId(null);
     } catch (err: any) {
       setErrorMessage(err.message || 'Error looking up postal code');
     } finally {
@@ -500,14 +501,14 @@ export const App: React.FC = () => {
               setFocusedRVM(rvm);
               activeTargetIdRef.current = rvm.id;
               setSelectedRvmId(rvm.id);
-              enrichTargetRvm(rvm.id, false);
+              enrichTargetRvm(rvm.id, true);
             }}
             isCustomSelected={Boolean(selectedRvmId && selectedRvmId !== nearestOperatingRVM?.id)}
             onResetToNearest={() => {
               setSelectedRvmId(null);
               if (nearestOperatingRVM?.id) {
                 activeTargetIdRef.current = nearestOperatingRVM.id;
-                enrichTargetRvm(nearestOperatingRVM.id, false);
+                enrichTargetRvm(nearestOperatingRVM.id, true);
               }
             }}
             isSyncingTelemetry={Boolean(
@@ -534,7 +535,7 @@ export const App: React.FC = () => {
                   // First tap on this dot -> dynamically reroute walking path!
                   activeTargetIdRef.current = rvm.id;
                   setSelectedRvmId(rvm.id);
-                  enrichTargetRvm(rvm.id, false);
+                  enrichTargetRvm(rvm.id, true);
                 }
               }}
               focusedRVM={focusedRVM}

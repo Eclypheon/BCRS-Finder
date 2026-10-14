@@ -88,7 +88,54 @@ async function fetchSeed() {
     });
   }
 
-  console.log(`Cleaned ${cleaned.length} Singapore RVMs.`);
+  console.log(`Cleaned ${cleaned.length} Singapore RVMs. Enriching with live authentic bin telemetry...`);
+
+  const CHUNK_SIZE = 35;
+  let fullCount = 0;
+  for (let i = 0; i < cleaned.length; i += CHUNK_SIZE) {
+    const chunk = cleaned.slice(i, i + CHUNK_SIZE);
+    await Promise.all(
+      chunk.map(async (rvm) => {
+        try {
+          const binRes = await fetch(
+            `https://bts.bcrs.sg/ab0capi/v10/${uuid}/locations/rvms/${rvm.id}/bin-status`,
+            {
+              headers: { ...HEADERS, 'x-bcrs-map-token': token },
+            }
+          ).then((r) => r.json());
+
+          if (binRes && binRes.status === 'ok' && Array.isArray(binRes.data) && binRes.data.length > 0) {
+            const binItems = binRes.data;
+            rvm.binStatusDetails = binItems;
+            const maxPct = Math.max(
+              ...binItems.map((b) => (typeof b.threshold_level === 'number' ? b.threshold_level : 0))
+            );
+            rvm.binFillPct = maxPct;
+
+            const validTimestamps = binItems
+              .map((b) => b.last_updated)
+              .filter((t) => Boolean(t && !isNaN(new Date(t).getTime())));
+            validTimestamps.sort((a, b) => new Date(b).getTime() - new Date(a).getTime());
+            const freshestTime = validTimestamps[0] || null;
+
+            if (freshestTime) {
+              rvm.last_updated = freshestTime;
+              rvm.updated_at = freshestTime;
+            }
+
+            // Real-time sensor threshold takes absolute precedence over bulk list lag
+            if (maxPct >= 100) {
+              rvm.status = 'FULL';
+              rvm.rawStatus = 'FULL';
+              fullCount++;
+            }
+          }
+        } catch (_) {}
+      })
+    );
+    process.stdout.write(`\rEnriched ${Math.min(i + CHUNK_SIZE, cleaned.length)}/${cleaned.length} machines with authentic bin telemetry...`);
+  }
+  console.log(`\nEnrichment complete: ${fullCount} machines identified as Bin Full (100%).`);
 
   const dest1 = path.join(__dirname, '../src/data/seed-rvms.json');
   const dest2 = path.join(__dirname, '../public/data/seed-rvms.json');
