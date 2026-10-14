@@ -28,11 +28,12 @@ export default async function handler(req, res) {
     const token = accRes?.data?.token;
     if (!token) throw new Error('Token failed');
 
+    const forceRefresh = req.query.refresh === 'true';
     const binRes = await fetch(`https://bts.bcrs.sg/ab0capi/v10/${uuid}/locations/rvms/${rvmId}/bin-status`, {
-      headers: { ...HEADERS, 'x-bcrs-map-token': token }
+      headers: { ...HEADERS, 'x-bcrs-map-token': token, ...(forceRefresh ? { 'Cache-Control': 'no-cache' } : {}) }
     }).then(r => r.json());
 
-    res.setHeader('Cache-Control', 's-maxage=15, stale-while-revalidate=30');
+    res.setHeader('Cache-Control', forceRefresh ? 'no-cache, no-store' : 's-maxage=15, stale-while-revalidate=30');
     return res.status(200).json(binRes);
   } catch (err) {
     return res.status(500).json({ status: 'error', message: err.message });

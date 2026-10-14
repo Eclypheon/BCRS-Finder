@@ -6,6 +6,7 @@ import {
   getMachineStatusInfo,
   getNavigationLinks,
   launchNavigation,
+  formatSingaporeDateTime,
 } from '../utils/geo';
 import {
   X,
@@ -39,6 +40,11 @@ export const NavigationModal: React.FC<NavigationModalProps> = ({
   const statusInfo = getMachineStatusInfo(rvm);
   const distanceStr = formatDistance(rvm.distanceMeters);
   const walkMinutes = estimateWalkMinutes(rvm.distanceMeters);
+  const telemetryTime =
+    rvm.last_updated ||
+    rvm.binStatusDetails?.find((b) => b.last_updated)?.last_updated ||
+    rvm.binStatusDetails?.[0]?.last_updated;
+  const formattedTimestamp = formatSingaporeDateTime(telemetryTime);
 
   const links = getNavigationLinks(
     rvm.latitude,
@@ -123,15 +129,22 @@ export const NavigationModal: React.FC<NavigationModalProps> = ({
                 )}
               </div>
 
-              {/* Status Badge */}
-              <div
-                className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg border text-xs font-semibold shrink-0 ${statusInfo.bgClass}`}
-              >
-                <span
-                  className="w-2 h-2 rounded-full shrink-0 animate-pulse"
-                  style={{ backgroundColor: statusInfo.hex }}
-                />
-                <span>{statusInfo.label}</span>
+              {/* Status Badge & Authentic Telemetry Timestamp */}
+              <div className="flex flex-col items-end gap-1 shrink-0">
+                <div
+                  className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg border text-xs font-semibold ${statusInfo.bgClass}`}
+                >
+                  <span
+                    className="w-2 h-2 rounded-full shrink-0 animate-pulse"
+                    style={{ backgroundColor: statusInfo.hex }}
+                  />
+                  <span>{statusInfo.label}</span>
+                </div>
+                {formattedTimestamp && (
+                  <span className="text-[10px] text-slate-400 font-medium">
+                    As of {formattedTimestamp}
+                  </span>
+                )}
               </div>
             </div>
 

@@ -16,28 +16,56 @@ const CORS_HEADERS = {
   'Access-Control-Allow-Headers': '*',
 };
 
-let cachedUuid = null;
-let cachedUuidExpiry = 0;
-let cachedToken = null;
-let cachedTokenExpiry = 0;
+let cachedAuth = null;
 
-async function getTokens() {
+async function getAuth(forceFresh = false) {
   const now = Date.now();
-  if (!cachedUuid || now > cachedUuidExpiry) {
-    const tokenRes = await fetch('https://bts.bcrs.sg/ab0capi/v10/map-token', { headers: HEADERS }).then(r => r.json());
-    if (!tokenRes?.data?.uuid) throw new Error('Failed to get map-token UUID');
-    cachedUuid = tokenRes.data.uuid;
-    cachedUuidExpiry = now + 1000 * 60 * 30; // 30 mins
+  if (!forceFresh && cachedAuth && now < cachedAuth.expiresAt) {
+    return cachedAuth;
   }
 
-  if (!cachedToken || now > cachedTokenExpiry) {
-    const accRes = await fetch(`https://bts.bcrs.sg/ab0capi/v10/${cachedUuid}/locations/access-token`, { headers: HEADERS }).then(r => r.json());
-    if (!accRes?.data?.token) throw new Error('Failed to get access-token');
-    cachedToken = accRes.data.token;
-    cachedTokenExpiry = now + 1000 * 60 * 10; // 10 mins
+  // 1. Fetch map-token UUID
+  const tokenRes = await fetch('https://bts.bcrs.sg/ab0capi/v10/map-token', { headers: HEADERS }).then(r => r.json());
+  if (!tokenRes?.data?.uuid) {
+    throw new Error('Failed to get map-token UUID: ' + JSON.stringify(tokenRes));
   }
+  const uuid = tokenRes.data.uuid;
 
-  return { uuid: cachedUuid, token: cachedToken };
+  // 2. Fetch access-token for this specific UUID
+  const accRes = await fetch(`https://bts.bcrs.sg/ab0capi/v10/${uuid}/locations/access-token`, { headers: HEADERS }).then(r => r.json());
+  if (!accRes?.data?.token) {
+    throw new Error('Failed to get access-token: ' + JSON.stringify(accRes));
+  }
+  const token = accRes.data.token;
+
+  // bts.bcrs.sg map-tokens have a 60s lifetime; cache for 45s safely
+  cachedAuth = {
+    uuid,
+    token,
+    expiresAt: now + 45 * 1000,
+  };
+  return cachedAuth;
+}
+
+async function fetchFromUpstream(pathBuilder, forceFresh = false) {
+  let auth = await getAuth(forceFresh);
+  try {
+    const res = await fetch(`https://bts.bcrs.sg/ab0capi/v10/${auth.uuid}/${pathBuilder(auth.uuid)}`, {
+      headers: { ...HEADERS, 'x-bcrs-map-token': auth.token },
+    });
+    const json = await res.json();
+    if (json && json.status === 'ok') {
+      return json;
+    }
+  } catch (_) {}
+
+  // If failed, force a fresh auth pair and retry once
+  cachedAuth = null;
+  auth = await getAuth(true);
+  const res = await fetch(`https://bts.bcrs.sg/ab0capi/v10/${auth.uuid}/${pathBuilder(auth.uuid)}`, {
+    headers: { ...HEADERS, 'x-bcrs-map-token': auth.token },
+  });
+  return await res.json();
 }
 
 export default {
@@ -51,15 +79,13 @@ export default {
     const forceRefresh = url.searchParams.get('refresh') === 'true';
 
     try {
-      const { uuid, token } = await getTokens();
-
-      // Route 1: Specific RVM bin-status (/api/rvms/:id/bin-status or ?rvmId=:id)
+      // Route 1: Specific RVM bin-status (/api/rvms/:id/bin-status or ?rvmId=:id or ?id=:id)
       const rvmIdMatch = pathname.match(/\/api\/rvms\/(\d+)\/bin-status/);
-      const rvmId = rvmIdMatch ? rvmIdMatch[1] : url.searchParams.get('rvmId');
+      const isBinStatusRoute = Boolean(rvmIdMatch || pathname.includes('bin-status') || url.searchParams.has('rvmId'));
+      const rvmId = rvmIdMatch ? rvmIdMatch[1] : (url.searchParams.get('rvmId') || (pathname.includes('bin-status') ? url.searchParams.get('id') : null));
+
       if (rvmId) {
-        const binRes = await fetch(`https://bts.bcrs.sg/ab0capi/v10/${uuid}/locations/rvms/${rvmId}/bin-status`, {
-          headers: { ...HEADERS, 'x-bcrs-map-token': token }
-        }).then(r => r.json());
+        const binRes = await fetchFromUpstream(() => `locations/rvms/${rvmId}/bin-status`, forceRefresh);
 
         return new Response(JSON.stringify(binRes), {
           headers: {
@@ -70,13 +96,18 @@ export default {
         });
       }
 
+      if (isBinStatusRoute) {
+        return new Response(JSON.stringify({ status: 'error', message: 'Valid rvmId is required for bin-status' }), {
+          status: 400,
+          headers: { 'Content-Type': 'application/json', ...CORS_HEADERS }
+        });
+      }
+
       // Route 2: All RVMs (/api/rvms, /rvms or root /)
-      const locRes = await fetch(`https://bts.bcrs.sg/ab0capi/v10/${uuid}/locations`, {
-        headers: { ...HEADERS, 'x-bcrs-map-token': token }
-      }).then(r => r.json());
+      const locRes = await fetchFromUpstream(() => 'locations', forceRefresh);
 
       if (!Array.isArray(locRes?.data)) {
-        throw new Error('Unexpected upstream response');
+        throw new Error('Unexpected upstream locations response: ' + JSON.stringify(locRes));
       }
 
       const fetchTimestamp = new Date().toISOString();
@@ -109,21 +140,20 @@ export default {
           rawStatus,
           coordsColor: item.coords_color || 'Blue',
           openingHours: item.rvmOpeningHours || 'Mon - Sun: 24 Hrs',
-          remarks: item.rvm_remarks || '',
-          updated_at: item.updated_at || item.updatedAt || fetchTimestamp
+          remarks: item.rvm_remarks || ''
         });
       }
 
       return new Response(JSON.stringify({
         status: 'ok',
         count: cleaned.length,
-        updated_at: fetchTimestamp,
+        synced_at: fetchTimestamp,
         data: cleaned
       }), {
         headers: {
           'Content-Type': 'application/json',
           ...CORS_HEADERS,
-          'Cache-Control': forceRefresh ? 'no-cache, no-store' : 'public, max-age=30, s-maxage=30',
+          'Cache-Control': forceRefresh ? 'no-cache, no-store' : 'public, max-age=20, s-maxage=20',
         }
       });
     } catch (err) {

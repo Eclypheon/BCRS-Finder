@@ -1,7 +1,7 @@
-import React, { useState, useEffect, useMemo, useCallback } from 'react';
+import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { RVM, UserLocation } from './types/rvm';
 import { fetchAllRVMs, fetchRvmBinStatus, geocodePostalCode } from './services/api';
-import { calculateDistanceMeters, getMachineStatusInfo } from './utils/geo';
+import { calculateDistanceMeters, getMachineStatusInfo, getLatestTimestamp } from './utils/geo';
 import { SearchBox } from './components/SearchBox';
 import { NearestOperatingBin } from './components/NearestOperatingBin';
 import { MapView } from './components/MapView';
@@ -32,6 +32,15 @@ export const App: React.FC = () => {
   const [focusedRVM, setFocusedRVM] = useState<RVM | null>(null);
   const [isOnline, setIsOnline] = useState(navigator.onLine);
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
+  const [telemetryLoadingIds, setTelemetryLoadingIds] = useState<Set<number>>(new Set());
+
+  // Race condition management refs
+  const loadRvmsSeqRef = useRef<number>(0);
+  const loadRvmsAbortControllerRef = useRef<AbortController | null>(null);
+  const binStatusSeqRef = useRef<Map<number, number>>(new Map());
+  const binStatusAbortControllers = useRef<Map<number, AbortController>>(new Map());
+  const lastFetchedTelemetryMs = useRef<Map<number, number>>(new Map());
+  const activeTargetIdRef = useRef<number | null>(null);
 
   // Monitor online status
   useEffect(() => {
@@ -45,39 +54,122 @@ export const App: React.FC = () => {
     };
   }, []);
 
-  // 1. Initial Load: Fetch RVMs and request live location
-  useEffect(() => {
-    loadRvms();
-    requestLiveLocation(true); // silent attempt on initial load
-  }, []);
-
   // Enrich target machine with live bin telemetry
   const enrichTargetRvm = useCallback(async (targetId: number, force = false) => {
+    // Check if we already have fresh telemetry for this machine (fetched in last 45s)
+    const lastFetchedTime = lastFetchedTelemetryMs.current.get(targetId);
+    const isFresh = lastFetchedTime && Date.now() - lastFetchedTime < 45000;
+    if (!force && isFresh) {
+      return;
+    }
+
+    const inFlightController = binStatusAbortControllers.current.get(targetId);
+    if (!force && inFlightController) {
+      // Non-force request is already in progress for this machine; let it resolve without restart
+      return;
+    }
+
+    // 1. If forced refresh or restart, abort previous pending request for this specific machine
+    if (inFlightController) {
+      inFlightController.abort();
+    }
+    const controller = new AbortController();
+    binStatusAbortControllers.current.set(targetId, controller);
+
+    // 2. Monotonic sequence ID per machine to strictly prevent out-of-order resolution
+    const reqSeq = (binStatusSeqRef.current.get(targetId) || 0) + 1;
+    binStatusSeqRef.current.set(targetId, reqSeq);
+
+    setTelemetryLoadingIds((prev) => new Set(prev).add(targetId));
+
     try {
-      const binItems = await fetchRvmBinStatus(targetId, force);
+      const binItems = await fetchRvmBinStatus(targetId, force, controller.signal);
+
+      // Stale check: if another request for this machine started, discard this result
+      if (binStatusSeqRef.current.get(targetId) !== reqSeq) {
+        return;
+      }
+
       if (!binItems || binItems.length === 0) return;
+
+      lastFetchedTelemetryMs.current.set(targetId, Date.now());
+
       const maxPct = Math.max(
         ...binItems.map((b) => (typeof b.threshold_level === 'number' ? b.threshold_level : 0))
       );
-      const latestTime = binItems.find((b) => b.last_updated)?.last_updated;
+
+      // Extract valid actual timestamps from bin status items
+      const validTimestamps = binItems
+        .map((b) => b.last_updated)
+        .filter((t): t is string => Boolean(t && !isNaN(new Date(t).getTime())));
+
+      // Sort descending to find newest real telemetry timestamp
+      validTimestamps.sort((a, b) => new Date(b).getTime() - new Date(a).getTime());
+      const freshestTime = validTimestamps[0] || null;
+
       setRvms((prev) =>
-        prev.map((item) =>
-          item.id === targetId
-            ? {
-                ...item,
-                binStatusDetails: binItems,
-                binFillPct: maxPct,
-                updated_at: latestTime || item.updated_at,
-              }
-            : item
-        )
+        prev.map((item) => {
+          if (item.id !== targetId) return item;
+
+          // Monotonic check: Ensure older response can NEVER overwrite a newer timestamp on this machine
+          const existingTimestamp =
+            item.last_updated ||
+            item.binStatusDetails?.find((b) => b.last_updated)?.last_updated;
+
+          const newestTime = getLatestTimestamp(existingTimestamp, freshestTime);
+
+          // If incoming telemetry is older than existing state, do not downgrade telemetry
+          if (existingTimestamp && freshestTime) {
+            const existingMs = new Date(existingTimestamp).getTime();
+            const incomingMs = new Date(freshestTime).getTime();
+            if (!isNaN(existingMs) && !isNaN(incomingMs) && incomingMs < existingMs) {
+              return item;
+            }
+          }
+
+          const isFull = maxPct >= 100;
+          const nextStatus = isFull ? 'FULL' : (item.status === 'FULL' ? 'RUNNING' : item.status);
+          const nextRawStatus = isFull ? 'FULL' : (item.rawStatus === 'FULL' ? 'RUNNING' : item.rawStatus);
+
+          return {
+            ...item,
+            status: nextStatus,
+            rawStatus: nextRawStatus,
+            binStatusDetails: binItems,
+            binFillPct: maxPct,
+            last_updated: newestTime,
+            updated_at: newestTime,
+          };
+        })
       );
-    } catch (_) {}
+    } catch (err: any) {
+      if (err?.name === 'AbortError') return;
+      console.info(`Could not fetch live bin status for machine ${targetId}:`, err);
+    } finally {
+      if (binStatusSeqRef.current.get(targetId) === reqSeq) {
+        setTelemetryLoadingIds((prev) => {
+          const next = new Set(prev);
+          next.delete(targetId);
+          return next;
+        });
+        binStatusAbortControllers.current.delete(targetId);
+      }
+    }
   }, []);
 
   const loadRvms = async (forceRefresh = false) => {
     if (forceRefresh) setIsRefreshing(true);
     else setIsLoadingRvms(true);
+
+    // Abort prior in-flight full load
+    if (loadRvmsAbortControllerRef.current) {
+      loadRvmsAbortControllerRef.current.abort();
+    }
+    const controller = new AbortController();
+    loadRvmsAbortControllerRef.current = controller;
+
+    // Sequence tracking for full loads to prevent earlier responses from overwriting later ones
+    const seq = ++loadRvmsSeqRef.current;
 
     // In PWA, check for service worker updates on manual refresh
     if (forceRefresh && 'serviceWorker' in navigator) {
@@ -86,31 +178,102 @@ export const App: React.FC = () => {
       }).catch(() => {});
     }
 
+    // Immediately kick off live telemetry sync for the active target machine concurrently!
+    const targetId = activeTargetIdRef.current || selectedRvmId;
+    if (targetId && forceRefresh) {
+      enrichTargetRvm(targetId, true);
+    }
+
     const startTime = Date.now();
     try {
-      const data = await fetchAllRVMs(forceRefresh);
-      setRvms(data);
+      const data = await fetchAllRVMs(forceRefresh, controller.signal);
+
+      // Stale check: if a newer refresh started while this was awaiting, abandon
+      if (seq !== loadRvmsSeqRef.current) {
+        return;
+      }
+
+      // Merge data with existing RVM state to preserve real telemetry timestamps and bin status details!
+      setRvms((prev) => {
+        if (!prev || prev.length === 0) return data;
+        const prevMap = new Map(prev.map((r) => [r.id, r]));
+
+        return data.map((newItem) => {
+          const existing = prevMap.get(newItem.id);
+          if (!existing) return newItem;
+
+          // Preserve existing real telemetry using monotonic latest timestamp selection
+          const existingTime =
+            existing.last_updated ||
+            existing.binStatusDetails?.find((b) => b.last_updated)?.last_updated;
+          const newTime =
+            newItem.last_updated ||
+            newItem.binStatusDetails?.find((b) => b.last_updated)?.last_updated;
+
+          const latestTime = getLatestTimestamp(existingTime, newTime);
+
+          const existingMs = existingTime ? new Date(existingTime).getTime() : -Infinity;
+          const newMs = newTime ? new Date(newTime).getTime() : -Infinity;
+          const useExistingTelemetry = existingMs >= newMs && Boolean(existing.binStatusDetails);
+          const effectiveFillPct = useExistingTelemetry
+            ? (existing.binFillPct ?? newItem.binFillPct)
+            : (newItem.binFillPct ?? existing.binFillPct);
+
+          const isFull =
+            (typeof effectiveFillPct === 'number' && effectiveFillPct >= 100) ||
+            newItem.status === 'FULL' ||
+            newItem.rawStatus === 'FULL' ||
+            (useExistingTelemetry && (existing.status === 'FULL' || existing.rawStatus === 'FULL'));
+
+          const finalStatus = isFull ? 'FULL' : newItem.status;
+          const finalRawStatus = isFull ? 'FULL' : newItem.rawStatus;
+
+          return {
+            ...newItem,
+            status: finalStatus,
+            rawStatus: finalRawStatus,
+            binStatusDetails: useExistingTelemetry
+              ? existing.binStatusDetails
+              : (newItem.binStatusDetails || existing.binStatusDetails),
+            binFillPct: effectiveFillPct,
+            last_updated: latestTime,
+            updated_at: latestTime,
+          };
+        });
+      });
+
       setLastUpdated(new Date());
 
-      // If an RVM is currently selected/targeted, force refresh its telemetry in the same pass
-      const targetId = selectedRvmId;
-      if (targetId) {
-        enrichTargetRvm(targetId, forceRefresh);
+      // If active target machine changed during fetchAllRVMs, refresh it now
+      const latestTargetId = activeTargetIdRef.current || selectedRvmId;
+      if (latestTargetId && latestTargetId !== targetId && forceRefresh) {
+        enrichTargetRvm(latestTargetId, true);
       }
     } catch (err: any) {
-      console.error('Failed to load RVMs:', err);
-      setErrorMessage('Could not load BCRS machines. Using cached data.');
-    } finally {
-      if (forceRefresh) {
-        const elapsed = Date.now() - startTime;
-        if (elapsed < 500) {
-          await new Promise((resolve) => setTimeout(resolve, 500 - elapsed));
-        }
+      if (err?.name === 'AbortError') return;
+      if (seq === loadRvmsSeqRef.current) {
+        console.error('Failed to load RVMs:', err);
+        setErrorMessage('Could not load BCRS machines. Using cached data.');
       }
-      setIsLoadingRvms(false);
-      setIsRefreshing(false);
+    } finally {
+      if (seq === loadRvmsSeqRef.current) {
+        if (forceRefresh) {
+          const elapsed = Date.now() - startTime;
+          if (elapsed < 500) {
+            await new Promise((resolve) => setTimeout(resolve, 500 - elapsed));
+          }
+        }
+        setIsLoadingRvms(false);
+        setIsRefreshing(false);
+      }
     }
   };
+
+  // 1. Initial Load: Fetch RVMs and request live location
+  useEffect(() => {
+    loadRvms();
+    requestLiveLocation(true); // silent attempt on initial load
+  }, []);
 
   // 2. Request Live Geolocation
   const requestLiveLocation = useCallback(async (silent = false) => {
@@ -226,8 +389,9 @@ export const App: React.FC = () => {
     return nearestOperatingRVM;
   }, [selectedRvmId, rvmsWithDistance, nearestOperatingRVM]);
 
-  // When active target ID changes, fetch its live bin status
+  // When active target ID changes, keep ref updated and fetch its live bin status
   useEffect(() => {
+    activeTargetIdRef.current = activeTargetRVM?.id || null;
     if (!activeTargetRVM?.id) return;
     enrichTargetRvm(activeTargetRVM.id, false);
   }, [activeTargetRVM?.id, enrichTargetRvm]);
@@ -322,11 +486,23 @@ export const App: React.FC = () => {
             userLocation={userLocation}
             onFocusOnMap={(rvm) => {
               setFocusedRVM(rvm);
+              activeTargetIdRef.current = rvm.id;
               setSelectedRvmId(rvm.id);
+              enrichTargetRvm(rvm.id, false);
             }}
             isCustomSelected={Boolean(selectedRvmId && selectedRvmId !== nearestOperatingRVM?.id)}
-            onResetToNearest={() => setSelectedRvmId(null)}
-            lastSyncedAt={lastUpdated}
+            onResetToNearest={() => {
+              setSelectedRvmId(null);
+              if (nearestOperatingRVM?.id) {
+                activeTargetIdRef.current = nearestOperatingRVM.id;
+                enrichTargetRvm(nearestOperatingRVM.id, false);
+              }
+            }}
+            isSyncingTelemetry={Boolean(
+              activeTargetRVM?.id &&
+                (telemetryLoadingIds.has(activeTargetRVM.id) ||
+                  (isRefreshing && activeTargetRVM.id === (activeTargetIdRef.current || selectedRvmId || nearestOperatingRVM?.id)))
+            )}
           />
         </div>
 
@@ -344,7 +520,9 @@ export const App: React.FC = () => {
                   setModalRVM(rvm);
                 } else {
                   // First tap on this dot -> dynamically reroute walking path!
+                  activeTargetIdRef.current = rvm.id;
                   setSelectedRvmId(rvm.id);
+                  enrichTargetRvm(rvm.id, false);
                 }
               }}
               focusedRVM={focusedRVM}

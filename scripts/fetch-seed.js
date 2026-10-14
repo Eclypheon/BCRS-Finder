@@ -84,7 +84,7 @@ async function fetchSeed() {
       coordsColor: item.coords_color || 'Blue',
       openingHours: item.rvmOpeningHours || 'Mon - Sun: 24 Hrs',
       remarks: item.rvm_remarks || '',
-      updated_at: item.updated_at || item.updatedAt || fetchTimestamp
+      ...(item.updated_at || item.updatedAt ? { updated_at: item.updated_at || item.updatedAt } : {})
     });
   }
 

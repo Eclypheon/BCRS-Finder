@@ -59,7 +59,7 @@ export default async function handler(req, res) {
         coordsColor: item.coords_color || 'Blue',
         openingHours: item.rvmOpeningHours || 'Mon - Sun: 24 Hrs',
         remarks: item.rvm_remarks || '',
-        updated_at: item.updated_at || item.updatedAt || fetchTimestamp
+        ...(item.updated_at || item.updatedAt ? { updated_at: item.updated_at || item.updatedAt } : {})
       });
     }
 
@@ -68,7 +68,7 @@ export default async function handler(req, res) {
     return res.status(200).json({
       status: 'ok',
       count: cleaned.length,
-      updated_at: fetchTimestamp,
+      synced_at: fetchTimestamp,
       data: cleaned
     });
   } catch (err) {

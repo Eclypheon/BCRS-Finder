@@ -60,7 +60,7 @@ export function calculateBearingDegrees(
 
 // Classify machine status into Green (In Operation), Yellow (Filling Fast), Red (Bin Full), or Gray (Offline)
 export function getMachineStatusInfo(rvm: RVM, binItems?: BinStatusItem[]): StatusStyleInfo {
-  const raw = (rvm.status || '').toUpperCase().trim();
+  const raw = (rvm.status || rvm.rawStatus || '').toUpperCase().trim();
   const items = binItems || rvm.binStatusDetails || [];
   
   // Find highest threshold_level if available
@@ -75,8 +75,11 @@ export function getMachineStatusInfo(rvm: RVM, binItems?: BinStatusItem[]): Stat
     }
   }
 
+  // Check fill percentage directly on rvm object as well
+  const fillPct = typeof rvm.binFillPct === 'number' && !isNaN(rvm.binFillPct) ? rvm.binFillPct : null;
+
   // 1. Red = Bin Full
-  if (raw === 'FULL' || (maxThreshold !== null && maxThreshold >= 100)) {
+  if (raw === 'FULL' || (maxThreshold !== null && maxThreshold >= 100) || (fillPct !== null && fillPct >= 100)) {
     return {
       category: 'FULL',
       label: 'Bin Full',
@@ -266,3 +269,25 @@ export function formatSingaporeDateTime(dateInput?: string | number | Date | nul
     hour12: true,
   }).format(date);
 }
+
+/**
+ * Returns the latest valid ISO/date string among the provided inputs,
+ * ensuring race conditions or out-of-order fetches can never cause an older
+ * timestamp to overwrite a newer one.
+ */
+export function getLatestTimestamp(...timestamps: (string | undefined | null)[]): string | undefined {
+  let latestMs = -Infinity;
+  let latestStr: string | undefined = undefined;
+
+  for (const t of timestamps) {
+    if (!t) continue;
+    const ms = new Date(t).getTime();
+    if (!isNaN(ms) && ms > latestMs) {
+      latestMs = ms;
+      latestStr = t;
+    }
+  }
+
+  return latestStr;
+}
+

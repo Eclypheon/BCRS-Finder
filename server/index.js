@@ -35,7 +35,8 @@ app.get('/api/rvms', async (req, res) => {
 app.get('/api/rvms/:id/bin-status', async (req, res) => {
   try {
     const rvmId = req.params.id;
-    const data = await bcrsService.getBinStatus(rvmId);
+    const forceRefresh = req.query.refresh === 'true';
+    const data = await bcrsService.getBinStatus(rvmId, forceRefresh);
     res.json({
       status: 'ok',
       rvmId: Number(rvmId),

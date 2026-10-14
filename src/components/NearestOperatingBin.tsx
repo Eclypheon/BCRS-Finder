@@ -15,7 +15,7 @@ interface NearestOperatingBinProps {
   onFocusOnMap: (rvm: RVM) => void;
   isCustomSelected?: boolean;
   onResetToNearest?: () => void;
-  lastSyncedAt?: Date | null;
+  isSyncingTelemetry?: boolean;
 }
 
 export const NearestOperatingBin: React.FC<NearestOperatingBinProps> = ({
@@ -24,7 +24,7 @@ export const NearestOperatingBin: React.FC<NearestOperatingBinProps> = ({
   onFocusOnMap,
   isCustomSelected = false,
   onResetToNearest,
-  lastSyncedAt,
+  isSyncingTelemetry = false,
 }) => {
   if (!rvm) {
     return (
@@ -36,11 +36,12 @@ export const NearestOperatingBin: React.FC<NearestOperatingBinProps> = ({
 
   const distanceStr = formatDistance(rvm.distanceMeters);
   const walkMinutes = estimateWalkMinutes(rvm.distanceMeters);
+  
+  // Authenticated real telemetry timestamp pulled directly from BCRS machine sensor API
   const rawUpdatedAt =
-    rvm.updated_at ||
-    rvm.updatedAt ||
-    rvm.binStatusDetails?.[0]?.last_updated ||
-    lastSyncedAt;
+    rvm.last_updated ||
+    rvm.binStatusDetails?.find((b) => b.last_updated)?.last_updated ||
+    rvm.binStatusDetails?.[0]?.last_updated;
   const formattedTimestamp = formatSingaporeDateTime(rawUpdatedAt);
 
   const links = getNavigationLinks(
@@ -119,15 +120,27 @@ export const NearestOperatingBin: React.FC<NearestOperatingBinProps> = ({
               </>
             )}
 
-            {formattedTimestamp && (
+            {isSyncingTelemetry && !formattedTimestamp ? (
+              <>
+                <span className="text-slate-600">•</span>
+                <span className="flex items-center gap-1 text-[11px] text-emerald-400 font-medium truncate">
+                  <Clock className="w-3 h-3 text-emerald-400 animate-spin shrink-0" />
+                  <span>Syncing status...</span>
+                </span>
+              </>
+            ) : formattedTimestamp ? (
               <>
                 <span className="text-slate-600">•</span>
                 <span className="flex items-center gap-1 text-[11px] text-slate-400 font-medium truncate">
-                  <Clock className="w-3 h-3 text-slate-500 shrink-0" />
+                  <Clock
+                    className={`w-3 h-3 shrink-0 ${
+                      isSyncingTelemetry ? 'text-emerald-400 animate-spin' : 'text-slate-500'
+                    }`}
+                  />
                   <span>As of {formattedTimestamp}</span>
                 </span>
               </>
-            )}
+            ) : null}
           </div>
         </div>
 

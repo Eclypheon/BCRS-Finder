@@ -39,9 +39,9 @@ class BcrsService {
     return [];
   }
 
-  async getMapUuid() {
+  async getMapUuid(forceFresh = false) {
     const now = Date.now();
-    if (this.mapUuid && this.mapUuidExpiry > now + 10000) {
+    if (!forceFresh && this.mapUuid && this.mapUuidExpiry > now + 10000) {
       return this.mapUuid;
     }
 
@@ -55,21 +55,22 @@ class BcrsService {
 
       this.mapUuid = uuid;
       this.mapUuidExpiry = now + (expiresInSec * 1000);
+      this.accessToken = null; // New UUID invalidates old access token
       return this.mapUuid;
     } catch (err) {
       console.warn('Failed to obtain map-token UUID:', err.message);
-      if (this.mapUuid) return this.mapUuid; // stale fallback
+      if (!forceFresh && this.mapUuid) return this.mapUuid; // stale fallback
       throw err;
     }
   }
 
-  async getAccessToken() {
+  async getAccessToken(forceFresh = false) {
     const now = Date.now();
-    if (this.accessToken && this.accessTokenExpiry > now + 15000) {
+    if (!forceFresh && this.accessToken && this.accessTokenExpiry > now + 15000) {
       return this.accessToken;
     }
 
-    const uuid = await this.getMapUuid();
+    const uuid = await this.getMapUuid(forceFresh);
     try {
       const url = `https://bts.bcrs.sg/ab0capi/v10/${uuid}/locations/access-token`;
       const res = await fetch(url, { headers: HEADERS });
@@ -80,9 +81,10 @@ class BcrsService {
 
       if (!token) throw new Error('No token in access-token response');
 
-      let expMs = now + 3600000;
+      let expMs = now + 60000;
       if (typeof expiresAt === 'number') {
-        expMs = expiresAt > 1e11 ? expiresAt : expiresAt * 1000;
+        const parsed = expiresAt > 1e11 ? expiresAt : expiresAt * 1000;
+        expMs = Math.min(parsed, now + 10 * 60 * 1000);
       }
 
       this.accessToken = token;
@@ -90,6 +92,10 @@ class BcrsService {
       return this.accessToken;
     } catch (err) {
       console.warn('Failed to obtain access-token:', err.message);
+      if (!forceFresh) {
+        // Try once with fresh UUID
+        return this.getAccessToken(true);
+      }
       if (this.accessToken) return this.accessToken;
       throw err;
     }
@@ -160,7 +166,7 @@ class BcrsService {
           coordsColor: item.coords_color || 'Blue',
           openingHours: item.rvmOpeningHours || 'Mon - Sun: 24 Hrs',
           remarks: item.rvm_remarks || '',
-          updated_at: item.updated_at || item.updatedAt || new Date().toISOString()
+          ...(item.updated_at || item.updatedAt ? { updated_at: item.updated_at || item.updatedAt } : {})
         });
       }
 
@@ -176,13 +182,13 @@ class BcrsService {
     }
   }
 
-  async getBinStatus(rvmId) {
+  async getBinStatus(rvmId, forceRefresh = false) {
     const id = parseInt(rvmId, 10);
     if (!id) return null;
 
     const now = Date.now();
     const cached = this.binStatusCache.get(id);
-    if (cached && cached.expiry > now) {
+    if (!forceRefresh && cached && cached.expiry > now) {
       return cached.data;
     }
 
