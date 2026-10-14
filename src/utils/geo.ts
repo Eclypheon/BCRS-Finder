@@ -244,3 +244,25 @@ export function launchNavigation(appType: 'google' | 'waze' | 'apple', links: Na
     return;
   }
 }
+
+/**
+ * Formats a UTC timestamp (such as ClickHouse bcrs.rvm_current updated_at)
+ * into Singapore Local Time (SGT, GMT+8) in the format "14 Oct, 2:05 PM"
+ */
+export function formatSingaporeDateTime(dateInput?: string | number | Date | null): string {
+  if (!dateInput) return '';
+  const date =
+    typeof dateInput === 'string' || typeof dateInput === 'number'
+      ? new Date(dateInput)
+      : dateInput;
+  if (isNaN(date.getTime())) return '';
+
+  return new Intl.DateTimeFormat('en-SG', {
+    timeZone: 'Asia/Singapore',
+    day: 'numeric',
+    month: 'short',
+    hour: 'numeric',
+    minute: '2-digit',
+    hour12: true,
+  }).format(date);
+}

@@ -159,7 +159,8 @@ class BcrsService {
           rawStatus,
           coordsColor: item.coords_color || 'Blue',
           openingHours: item.rvmOpeningHours || 'Mon - Sun: 24 Hrs',
-          remarks: item.rvm_remarks || ''
+          remarks: item.rvm_remarks || '',
+          updated_at: item.updated_at || item.updatedAt || new Date().toISOString()
         });
       }
 

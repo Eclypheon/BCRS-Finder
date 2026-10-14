@@ -184,10 +184,16 @@ export const App: React.FC = () => {
         const maxPct = Math.max(
           ...binItems.map((b) => (typeof b.threshold_level === 'number' ? b.threshold_level : 0))
         );
+        const latestTime = binItems.find((b) => b.last_updated)?.last_updated;
         setRvms((prev) =>
           prev.map((item) =>
             item.id === nearestOperatingRVM.id
-              ? { ...item, binStatusDetails: binItems, binFillPct: maxPct }
+              ? {
+                  ...item,
+                  binStatusDetails: binItems,
+                  binFillPct: maxPct,
+                  updated_at: latestTime || item.updated_at,
+                }
               : item
           )
         );
@@ -293,6 +299,7 @@ export const App: React.FC = () => {
             }}
             isCustomSelected={Boolean(routedRVM && routedRVM.id !== nearestOperatingRVM?.id)}
             onResetToNearest={() => setRoutedRVM(null)}
+            lastSyncedAt={lastUpdated}
           />
         </div>
 

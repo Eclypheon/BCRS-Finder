@@ -70,6 +70,7 @@ async function fetchSeed() {
       status = 'RUNNING';
     }
 
+    const fetchTimestamp = new Date().toISOString();
     cleaned.push({
       id: item.id,
       serialNumber: item.serialNumber || '',
@@ -82,7 +83,8 @@ async function fetchSeed() {
       rawStatus,
       coordsColor: item.coords_color || 'Blue',
       openingHours: item.rvmOpeningHours || 'Mon - Sun: 24 Hrs',
-      remarks: item.rvm_remarks || ''
+      remarks: item.rvm_remarks || '',
+      updated_at: item.updated_at || item.updatedAt || fetchTimestamp
     });
   }
 

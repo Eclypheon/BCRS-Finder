@@ -16,6 +16,8 @@ export interface RVM {
   distanceMeters?: number;
   binFillPct?: number | null;
   binStatusDetails?: BinStatusItem[];
+  updated_at?: string;
+  updatedAt?: string;
 }
 
 export interface BinStatusItem {
