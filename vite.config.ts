@@ -10,6 +10,7 @@ export default defineConfig({
     tailwindcss(),
     VitePWA({
       registerType: 'autoUpdate',
+      injectRegister: null,
       base: '/BCRS-Finder/',
       includeAssets: ['favicon.svg', 'pwa-192x192.png', 'pwa-512x512.png'],
       manifest: {
@@ -43,8 +44,16 @@ export default defineConfig({
         ]
       },
       workbox: {
+        cleanupOutdatedCaches: true,
+        skipWaiting: true,
+        clientsClaim: true,
         globPatterns: ['**/*.{js,css,html,ico,png,svg}'],
         runtimeCaching: [
+          {
+            // Ensure live edge proxy is ALWAYS fetched from network directly
+            urlPattern: /^https:\/\/.*\.workers\.dev\/.*/i,
+            handler: 'NetworkOnly',
+          },
           {
             urlPattern: /.*\/data\/seed-rvms\.json.*/i,
             handler: 'NetworkFirst',

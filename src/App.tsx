@@ -55,6 +55,13 @@ export const App: React.FC = () => {
     if (forceRefresh) setIsRefreshing(true);
     else setIsLoadingRvms(true);
 
+    // In PWA, check for service worker updates on manual refresh
+    if (forceRefresh && 'serviceWorker' in navigator) {
+      navigator.serviceWorker.getRegistration().then((reg) => {
+        reg?.update().catch(() => {});
+      }).catch(() => {});
+    }
+
     const startTime = Date.now();
     try {
       const data = await fetchAllRVMs(forceRefresh);

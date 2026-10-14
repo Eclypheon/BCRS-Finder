@@ -17,11 +17,14 @@ const getEdgeProxyBase = () => (import.meta.env.VITE_BCRS_PROXY_URL || DEFAULT_E
 
 // Fetch all Singapore BCRS RVMs with multi-layer resilience and real-time refresh support
 export async function fetchAllRVMs(forceRefresh = false): Promise<RVM[]> {
-  // If force refresh, clear local storage cache immediately
+  // If force refresh, clear local storage cache immediately and purge Workbox cache
   if (forceRefresh) {
     try {
       localStorage.removeItem(LOCAL_STORAGE_RVM_KEY);
       localStorage.removeItem(LOCAL_STORAGE_TIMESTAMP_KEY);
+      if ('caches' in window) {
+        caches.delete('bcrs-seed-data-cache').catch(() => {});
+      }
     } catch (_) {}
   } else {
     // Check local cache (valid for 2 minutes)
@@ -53,9 +56,12 @@ export async function fetchAllRVMs(forceRefresh = false): Promise<RVM[]> {
   for (const endpoint of proxyEndpoints) {
     try {
       const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 3500);
+      const timeoutId = setTimeout(() => controller.abort(), 6500);
       const res = await fetch(endpoint, {
+        method: 'GET',
         headers: { Accept: 'application/json' },
+        mode: 'cors',
+        cache: forceRefresh ? 'no-store' : 'default',
         signal: controller.signal,
       });
       clearTimeout(timeoutId);
