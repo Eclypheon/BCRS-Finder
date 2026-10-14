@@ -140,7 +140,10 @@ export default {
           rawStatus,
           coordsColor: item.coords_color || 'Blue',
           openingHours: item.rvmOpeningHours || 'Mon - Sun: 24 Hrs',
-          remarks: item.rvm_remarks || ''
+          remarks: item.rvm_remarks || '',
+          ...(item.updated_at || item.updatedAt || item.last_updated
+            ? { updated_at: item.updated_at || item.updatedAt || item.last_updated }
+            : {})
         });
       }
 
