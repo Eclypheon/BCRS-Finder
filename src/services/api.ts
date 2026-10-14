@@ -39,27 +39,36 @@ export async function fetchAllRVMs(forceRefresh = false): Promise<RVM[]> {
     }
   }
 
-  // 1. Try local Express API / proxy (when running full server)
-  try {
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 2000);
-    const res = await fetch(`/api/rvms${forceRefresh ? '?refresh=true' : ''}`, {
-      headers: { Accept: 'application/json' },
-      signal: controller.signal,
-    });
-    clearTimeout(timeoutId);
-    if (res.ok) {
-      const json = await res.json();
-      if (json && json.status === 'ok' && Array.isArray(json.data) && json.data.length > 0) {
-        try {
-          localStorage.setItem(LOCAL_STORAGE_RVM_KEY, JSON.stringify(json.data));
-          localStorage.setItem(LOCAL_STORAGE_TIMESTAMP_KEY, Date.now().toString());
-        } catch (_) {}
-        return json.data;
+  // 1. Try Live Edge Proxy / Backend API (Real-time on-demand sync)
+  const edgeProxyBase = (import.meta.env.VITE_BCRS_PROXY_URL || '').replace(/\/$/, '');
+  const proxyEndpoints = [
+    edgeProxyBase ? `${edgeProxyBase}/api/rvms${forceRefresh ? '?refresh=true' : ''}` : null,
+    edgeProxyBase ? `${edgeProxyBase}${forceRefresh ? '?refresh=true' : ''}` : null,
+    `/api/rvms${forceRefresh ? '?refresh=true' : ''}`,
+  ].filter(Boolean) as string[];
+
+  for (const endpoint of proxyEndpoints) {
+    try {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 3500);
+      const res = await fetch(endpoint, {
+        headers: { Accept: 'application/json' },
+        signal: controller.signal,
+      });
+      clearTimeout(timeoutId);
+      if (res.ok) {
+        const json = await res.json();
+        if (json && json.status === 'ok' && Array.isArray(json.data) && json.data.length > 0) {
+          try {
+            localStorage.setItem(LOCAL_STORAGE_RVM_KEY, JSON.stringify(json.data));
+            localStorage.setItem(LOCAL_STORAGE_TIMESTAMP_KEY, Date.now().toString());
+          } catch (_) {}
+          return json.data;
+        }
       }
+    } catch (_) {
+      // Continue to next endpoint or fallback
     }
-  } catch (_) {
-    // Expected on GitHub Pages static deployment
   }
 
   // 2. Fetch fresh static JSON (with cache busting and no-store on refresh)
@@ -111,17 +120,26 @@ export async function fetchAllRVMs(forceRefresh = false): Promise<RVM[]> {
 
 // Fetch bin status for an individual RVM
 export async function fetchRvmBinStatus(rvmId: number): Promise<BinStatusItem[]> {
-  try {
-    const res = await fetch(`/api/rvms/${rvmId}/bin-status`);
-    if (res.ok) {
-      const json = await res.json();
-      if (json && json.status === 'ok' && Array.isArray(json.data)) {
-        return json.data;
+  const edgeProxyBase = (import.meta.env.VITE_BCRS_PROXY_URL || '').replace(/\/$/, '');
+  const endpoints = [
+    edgeProxyBase ? `${edgeProxyBase}/api/rvms/${rvmId}/bin-status` : null,
+    edgeProxyBase ? `${edgeProxyBase}/api/bin-status?id=${rvmId}` : null,
+    edgeProxyBase ? `${edgeProxyBase}?rvmId=${rvmId}` : null,
+    `/api/rvms/${rvmId}/bin-status`,
+  ].filter(Boolean) as string[];
+
+  for (const url of endpoints) {
+    try {
+      const res = await fetch(url);
+      if (res.ok) {
+        const json = await res.json();
+        if (json && json.status === 'ok' && Array.isArray(json.data)) {
+          return json.data;
+        }
       }
-    }
-  } catch (err) {
-    console.warn(`Could not fetch live bin status for RVM ${rvmId}:`, err);
+    } catch (_) {}
   }
+
   return [];
 }
 
