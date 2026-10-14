@@ -128,18 +128,24 @@ export async function fetchAllRVMs(forceRefresh = false): Promise<RVM[]> {
 }
 
 // Fetch bin status for an individual RVM
-export async function fetchRvmBinStatus(rvmId: number): Promise<BinStatusItem[]> {
+export async function fetchRvmBinStatus(rvmId: number, forceRefresh = false): Promise<BinStatusItem[]> {
   const edgeProxyBase = getEdgeProxyBase();
   const endpoints = [
-    edgeProxyBase ? `${edgeProxyBase}/api/rvms/${rvmId}/bin-status` : null,
-    edgeProxyBase ? `${edgeProxyBase}/api/bin-status?id=${rvmId}` : null,
-    edgeProxyBase ? `${edgeProxyBase}?rvmId=${rvmId}` : null,
-    `/api/rvms/${rvmId}/bin-status`,
+    edgeProxyBase ? `${edgeProxyBase}/api/rvms/${rvmId}/bin-status${forceRefresh ? '?refresh=true' : ''}` : null,
+    edgeProxyBase ? `${edgeProxyBase}/api/bin-status?id=${rvmId}${forceRefresh ? '&refresh=true' : ''}` : null,
+    edgeProxyBase ? `${edgeProxyBase}?rvmId=${rvmId}${forceRefresh ? '&refresh=true' : ''}` : null,
+    `/api/rvms/${rvmId}/bin-status${forceRefresh ? '?refresh=true' : ''}`,
   ].filter(Boolean) as string[];
 
   for (const url of endpoints) {
     try {
-      const res = await fetch(url);
+      const res = await fetch(url, {
+        cache: forceRefresh ? 'no-store' : 'default',
+        headers: {
+          Accept: 'application/json',
+          'Cache-Control': forceRefresh ? 'no-cache, no-store' : 'default',
+        },
+      });
       if (res.ok) {
         const json = await res.json();
         if (json && json.status === 'ok' && Array.isArray(json.data)) {

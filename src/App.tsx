@@ -27,7 +27,7 @@ export const App: React.FC = () => {
   const [isLoadingLocation, setIsLoadingLocation] = useState(false);
   const [isLoadingPostal, setIsLoadingPostal] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
-  const [routedRVM, setRoutedRVM] = useState<RVM | null>(null);
+  const [selectedRvmId, setSelectedRvmId] = useState<number | null>(null);
   const [modalRVM, setModalRVM] = useState<RVM | null>(null);
   const [focusedRVM, setFocusedRVM] = useState<RVM | null>(null);
   const [isOnline, setIsOnline] = useState(navigator.onLine);
@@ -51,6 +51,30 @@ export const App: React.FC = () => {
     requestLiveLocation(true); // silent attempt on initial load
   }, []);
 
+  // Enrich target machine with live bin telemetry
+  const enrichTargetRvm = useCallback(async (targetId: number, force = false) => {
+    try {
+      const binItems = await fetchRvmBinStatus(targetId, force);
+      if (!binItems || binItems.length === 0) return;
+      const maxPct = Math.max(
+        ...binItems.map((b) => (typeof b.threshold_level === 'number' ? b.threshold_level : 0))
+      );
+      const latestTime = binItems.find((b) => b.last_updated)?.last_updated;
+      setRvms((prev) =>
+        prev.map((item) =>
+          item.id === targetId
+            ? {
+                ...item,
+                binStatusDetails: binItems,
+                binFillPct: maxPct,
+                updated_at: latestTime || item.updated_at,
+              }
+            : item
+        )
+      );
+    } catch (_) {}
+  }, []);
+
   const loadRvms = async (forceRefresh = false) => {
     if (forceRefresh) setIsRefreshing(true);
     else setIsLoadingRvms(true);
@@ -67,6 +91,12 @@ export const App: React.FC = () => {
       const data = await fetchAllRVMs(forceRefresh);
       setRvms(data);
       setLastUpdated(new Date());
+
+      // If an RVM is currently selected/targeted, force refresh its telemetry in the same pass
+      const targetId = selectedRvmId;
+      if (targetId) {
+        enrichTargetRvm(targetId, forceRefresh);
+      }
     } catch (err: any) {
       console.error('Failed to load RVMs:', err);
       setErrorMessage('Could not load BCRS machines. Using cached data.');
@@ -187,37 +217,20 @@ export const App: React.FC = () => {
     );
   }, [rvmsWithDistance, userLocation]);
 
-  // 6. Enrich Nearest Operating Machine with live bin telemetry
+  // 6. Active Target RVM: derived dynamically from freshest rvmsWithDistance!
+  const activeTargetRVM = useMemo(() => {
+    if (selectedRvmId) {
+      const match = rvmsWithDistance.find((r) => r.id === selectedRvmId);
+      if (match) return match;
+    }
+    return nearestOperatingRVM;
+  }, [selectedRvmId, rvmsWithDistance, nearestOperatingRVM]);
+
+  // When active target ID changes, fetch its live bin status
   useEffect(() => {
-    if (!nearestOperatingRVM) return;
-
-    let isMounted = true;
-    fetchRvmBinStatus(nearestOperatingRVM.id)
-      .then((binItems) => {
-        if (!isMounted || !binItems || binItems.length === 0) return;
-        const maxPct = Math.max(
-          ...binItems.map((b) => (typeof b.threshold_level === 'number' ? b.threshold_level : 0))
-        );
-        const latestTime = binItems.find((b) => b.last_updated)?.last_updated;
-        setRvms((prev) =>
-          prev.map((item) =>
-            item.id === nearestOperatingRVM.id
-              ? {
-                  ...item,
-                  binStatusDetails: binItems,
-                  binFillPct: maxPct,
-                  updated_at: latestTime || item.updated_at,
-                }
-              : item
-          )
-        );
-      })
-      .catch(() => {});
-
-    return () => {
-      isMounted = false;
-    };
-  }, [nearestOperatingRVM?.id]);
+    if (!activeTargetRVM?.id) return;
+    enrichTargetRvm(activeTargetRVM.id, false);
+  }, [activeTargetRVM?.id, enrichTargetRvm]);
 
   // Focus on map handler
   const handleFocusRVMOnMap = (rvm: RVM) => {
@@ -305,14 +318,14 @@ export const App: React.FC = () => {
 
           {/* 2. Target Operating Bin with Instant 1-Click Navigation Icons */}
           <NearestOperatingBin
-            rvm={routedRVM || nearestOperatingRVM}
+            rvm={activeTargetRVM}
             userLocation={userLocation}
             onFocusOnMap={(rvm) => {
               setFocusedRVM(rvm);
-              setRoutedRVM(rvm);
+              setSelectedRvmId(rvm.id);
             }}
-            isCustomSelected={Boolean(routedRVM && routedRVM.id !== nearestOperatingRVM?.id)}
-            onResetToNearest={() => setRoutedRVM(null)}
+            isCustomSelected={Boolean(selectedRvmId && selectedRvmId !== nearestOperatingRVM?.id)}
+            onResetToNearest={() => setSelectedRvmId(null)}
             lastSyncedAt={lastUpdated}
           />
         </div>
@@ -325,18 +338,18 @@ export const App: React.FC = () => {
               userLocation={userLocation}
               rvms={rvmsWithDistance}
               onSelectRVM={(rvm) => {
-                const currentTargetId = (routedRVM || nearestOperatingRVM)?.id;
+                const currentTargetId = activeTargetRVM?.id;
                 if (currentTargetId === rvm.id) {
                   // Second tap on the same dot -> open details & navigation modal!
                   setModalRVM(rvm);
                 } else {
                   // First tap on this dot -> dynamically reroute walking path!
-                  setRoutedRVM(rvm);
+                  setSelectedRvmId(rvm.id);
                 }
               }}
               focusedRVM={focusedRVM}
               onClearFocus={() => setFocusedRVM(null)}
-              targetRVM={routedRVM || nearestOperatingRVM}
+              targetRVM={activeTargetRVM}
             />
           </div>
 
@@ -350,7 +363,7 @@ export const App: React.FC = () => {
 
       {/* Navigation Modal - only opens on second tap */}
       <NavigationModal
-        rvm={modalRVM}
+        rvm={modalRVM ? rvmsWithDistance.find((r) => r.id === modalRVM.id) || modalRVM : null}
         userLocation={userLocation}
         onClose={() => setModalRVM(null)}
       />
