@@ -1,8 +1,8 @@
 import { RVM, BinStatusItem } from '../types/rvm';
 import fallbackSeed from '../data/seed-rvms.json';
 
-const LOCAL_STORAGE_RVM_KEY = 'bcrs_rvms_cache_v4';
-const LOCAL_STORAGE_TIMESTAMP_KEY = 'bcrs_rvms_cache_time_v4';
+const LOCAL_STORAGE_RVM_KEY = 'bcrs_rvms_cache_v5';
+const LOCAL_STORAGE_TIMESTAMP_KEY = 'bcrs_rvms_cache_time_v5';
 
 // Strip batch or synthetic timestamps from raw location lists so they never masquerade as machine telemetry
 function sanitizeRvms(items: any[]): RVM[] {
@@ -35,29 +35,28 @@ export async function fetchAllRVMs(forceRefresh = false, signal?: AbortSignal): 
     throw new DOMException('Aborted', 'AbortError');
   }
 
-  // If force refresh, clear local storage cache immediately and purge Workbox cache
+  // If force refresh, clear all local storage caches immediately and purge Workbox cache
   if (forceRefresh) {
     try {
       localStorage.removeItem(LOCAL_STORAGE_RVM_KEY);
       localStorage.removeItem(LOCAL_STORAGE_TIMESTAMP_KEY);
-      localStorage.removeItem('bcrs_rvms_cache_v1');
+      for (let i = 1; i <= 5; i++) {
+        localStorage.removeItem(`bcrs_rvms_cache_v${i}`);
+        localStorage.removeItem(`bcrs_rvms_cache_time_v${i}`);
+      }
       localStorage.removeItem('bcrs_rvms_cache_time');
-      localStorage.removeItem('bcrs_rvms_cache_v2');
-      localStorage.removeItem('bcrs_rvms_cache_time_v2');
-      localStorage.removeItem('bcrs_rvms_cache_v3');
-      localStorage.removeItem('bcrs_rvms_cache_time_v3');
       if ('caches' in window) {
         caches.delete('bcrs-seed-data-cache').catch(() => {});
       }
     } catch (_) {}
   } else {
-    // Check local cache (valid for 45 seconds)
+    // Check local cache (valid for 30 seconds only)
     try {
       const cachedTime = localStorage.getItem(LOCAL_STORAGE_TIMESTAMP_KEY);
       const cachedData = localStorage.getItem(LOCAL_STORAGE_RVM_KEY);
       if (cachedTime && cachedData) {
         const ageMs = Date.now() - parseInt(cachedTime, 10);
-        if (ageMs < 1000 * 45) {
+        if (ageMs < 1000 * 30) {
           const parsed = JSON.parse(cachedData);
           if (Array.isArray(parsed) && parsed.length > 0) {
             return sanitizeRvms(parsed);
@@ -80,7 +79,7 @@ export async function fetchAllRVMs(forceRefresh = false, signal?: AbortSignal): 
     if (signal?.aborted) throw new DOMException('Aborted', 'AbortError');
     try {
       const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 2500);
+      const timeoutId = setTimeout(() => controller.abort(), 8000);
       const onAbort = () => controller.abort();
       if (signal) signal.addEventListener('abort', onAbort, { once: true });
 
@@ -106,10 +105,8 @@ export async function fetchAllRVMs(forceRefresh = false, signal?: AbortSignal): 
         }
       }
     } catch (e: any) {
-      if (signal?.aborted || e?.name === 'AbortError') {
-        if (signal?.aborted) throw new DOMException('Aborted', 'AbortError');
-      }
-      // Continue to next endpoint or fallback
+      if (signal?.aborted) throw new DOMException('Aborted', 'AbortError');
+      // Continue to next endpoint or fallback on timeout
     }
   }
 
@@ -138,7 +135,9 @@ export async function fetchAllRVMs(forceRefresh = false, signal?: AbortSignal): 
       }
     }
   } catch (err: any) {
-    if (err?.name === 'AbortError') throw err;
+    if (signal?.aborted || err?.name === 'AbortError') {
+      if (signal?.aborted) throw new DOMException('Aborted', 'AbortError');
+    }
     console.info('Local seed fetch failed, trying GitHub raw backup...');
   }
 
@@ -162,7 +161,9 @@ export async function fetchAllRVMs(forceRefresh = false, signal?: AbortSignal): 
       }
     }
   } catch (err: any) {
-    if (err?.name === 'AbortError') throw err;
+    if (signal?.aborted || err?.name === 'AbortError') {
+      if (signal?.aborted) throw new DOMException('Aborted', 'AbortError');
+    }
   }
 
   // 4. Fallback to bundled import
@@ -180,7 +181,6 @@ export async function fetchRvmBinStatus(
   const refreshParam = forceRefresh ? 'refresh=true' : '';
   const queryStr = [refreshParam, cacheBuster ? cacheBuster.slice(1) : ''].filter(Boolean).join('&');
   const qs = queryStr ? `?${queryStr}` : '';
-  const ampQs = queryStr ? `&${queryStr}` : '';
 
   const endpoints = [
     edgeProxyBase ? `${edgeProxyBase}/api/rvms/${rvmId}/bin-status${qs}` : null,
@@ -191,7 +191,7 @@ export async function fetchRvmBinStatus(
     if (signal?.aborted) throw new DOMException('Aborted', 'AbortError');
     try {
       const endpointController = new AbortController();
-      const timeoutId = setTimeout(() => endpointController.abort(), 2500);
+      const timeoutId = setTimeout(() => endpointController.abort(), 6000);
       const onAbort = () => endpointController.abort();
       if (signal) signal.addEventListener('abort', onAbort, { once: true });
 
@@ -213,7 +213,7 @@ export async function fetchRvmBinStatus(
         if (json && json.status === 'error' && !forceRefresh && url.includes(edgeProxyBase)) {
           const retryUrl = url.includes('?') ? `${url}&refresh=true` : `${url}?refresh=true`;
           const retryController = new AbortController();
-          const retryTimeoutId = setTimeout(() => retryController.abort(), 2500);
+          const retryTimeoutId = setTimeout(() => retryController.abort(), 6000);
           const onRetryAbort = () => retryController.abort();
           if (signal) signal.addEventListener('abort', onRetryAbort, { once: true });
 
@@ -247,8 +247,8 @@ export async function fetchRvmBinStatus(
         }
       }
     } catch (e: any) {
-      if (e?.name === 'AbortError') throw e;
-      // Continue to next endpoint or fallback
+      if (signal?.aborted) throw new DOMException('Aborted', 'AbortError');
+      // Continue to next endpoint or fallback on internal timeout
     }
   }
 

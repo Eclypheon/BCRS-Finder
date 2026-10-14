@@ -59,10 +59,10 @@ export default defineConfig({
             handler: 'NetworkFirst',
             options: {
               cacheName: 'bcrs-seed-data-cache',
-              networkTimeoutSeconds: 3,
+              networkTimeoutSeconds: 2,
               expiration: {
                 maxEntries: 2,
-                maxAgeSeconds: 60 * 3, // 3 minutes
+                maxAgeSeconds: 30, // 30 seconds only
               },
               cacheableResponse: {
                 statuses: [0, 200],

@@ -111,25 +111,21 @@ export const App: React.FC = () => {
         prev.map((item) => {
           if (item.id !== targetId) return item;
 
-          // Monotonic check: Ensure older response can NEVER overwrite a newer timestamp on this machine
           const existingTimestamp =
             item.last_updated ||
             item.binStatusDetails?.find((b) => b.last_updated)?.last_updated;
 
-          const newestTime = getLatestTimestamp(existingTimestamp, freshestTime);
-
-          // If incoming telemetry is older than existing state, do not downgrade telemetry
-          if (existingTimestamp && freshestTime) {
-            const existingMs = new Date(existingTimestamp).getTime();
-            const incomingMs = new Date(freshestTime).getTime();
-            if (!isNaN(existingMs) && !isNaN(incomingMs) && incomingMs < existingMs) {
-              return item;
-            }
-          }
+          // Live hardware sensor timestamp takes precedence; fallback to previous timestamp
+          const newestTime = freshestTime || existingTimestamp;
 
           const isFull = maxPct >= 100;
-          const nextStatus = isFull ? 'FULL' : (item.status === 'FULL' ? 'RUNNING' : item.status);
-          const nextRawStatus = isFull ? 'FULL' : (item.rawStatus === 'FULL' ? 'RUNNING' : item.rawStatus);
+          const isErrorOrOffline = ['OFFLINE', 'CLEANING', 'SUSPENDED', 'MAINTENANCE', 'ERROR', 'UNKNOWN'].includes(
+            (item.rawStatus || item.status || '').toUpperCase()
+          );
+
+          // If sensor says >= 100%, it is FULL. If emptied (< 100%) and wasn't offline/error, it is RUNNING.
+          const nextStatus = isFull ? 'FULL' : isErrorOrOffline ? item.status : 'RUNNING';
+          const nextRawStatus = isFull ? 'FULL' : isErrorOrOffline ? item.rawStatus : 'RUNNING';
 
           return {
             ...item,
@@ -202,7 +198,7 @@ export const App: React.FC = () => {
           const existing = prevMap.get(newItem.id);
           if (!existing) return newItem;
 
-          // Preserve existing real telemetry using monotonic latest timestamp selection
+          // Preserve existing real telemetry
           const existingTime =
             existing.last_updated ||
             existing.binStatusDetails?.find((b) => b.last_updated)?.last_updated;
@@ -212,30 +208,30 @@ export const App: React.FC = () => {
 
           const latestTime = getLatestTimestamp(existingTime, newTime);
 
-          const existingMs = existingTime ? new Date(existingTime).getTime() : -Infinity;
-          const newMs = newTime ? new Date(newTime).getTime() : -Infinity;
-          const useExistingTelemetry = existingMs >= newMs && Boolean(existing.binStatusDetails);
-          const effectiveFillPct = useExistingTelemetry
-            ? (existing.binFillPct ?? newItem.binFillPct)
-            : (newItem.binFillPct ?? existing.binFillPct);
+          const existingFillPct = typeof existing.binFillPct === 'number' ? existing.binFillPct : null;
+          const newFillPct = typeof newItem.binFillPct === 'number' ? newItem.binFillPct : null;
+          const effectiveFillPct = existingFillPct ?? newFillPct;
 
-          const isFull =
-            (typeof effectiveFillPct === 'number' && effectiveFillPct >= 100) ||
-            newItem.status === 'FULL' ||
-            newItem.rawStatus === 'FULL' ||
-            (useExistingTelemetry && (existing.status === 'FULL' || existing.rawStatus === 'FULL'));
+          // Priority 1: Upstream status from live data (FULL, ERROR, OFFLINE, RUNNING)
+          // Priority 2: If live sensor telemetry on this machine is >= 100%, mark FULL
+          const isUpstreamFull = newItem.status === 'FULL' || newItem.rawStatus === 'FULL';
+          const isTelemetryFull = Boolean(effectiveFillPct && effectiveFillPct >= 100);
+          const isFull = isUpstreamFull || isTelemetryFull;
 
-          const finalStatus = isFull ? 'FULL' : newItem.status;
-          const finalRawStatus = isFull ? 'FULL' : newItem.rawStatus;
+          let finalStatus = newItem.status;
+          let finalRawStatus = newItem.rawStatus;
+
+          if (isFull) {
+            finalStatus = 'FULL';
+            finalRawStatus = 'FULL';
+          }
 
           return {
             ...newItem,
             status: finalStatus,
             rawStatus: finalRawStatus,
-            binStatusDetails: useExistingTelemetry
-              ? existing.binStatusDetails
-              : (newItem.binStatusDetails || existing.binStatusDetails),
-            binFillPct: effectiveFillPct,
+            binStatusDetails: existing.binStatusDetails || newItem.binStatusDetails,
+            binFillPct: effectiveFillPct ?? undefined,
             last_updated: latestTime,
             updated_at: latestTime,
           };
@@ -395,6 +391,22 @@ export const App: React.FC = () => {
     if (!activeTargetRVM?.id) return;
     enrichTargetRvm(activeTargetRVM.id, false);
   }, [activeTargetRVM?.id, enrichTargetRvm]);
+
+  // Proactively fetch live telemetry for the closest 3 machines so full bins never masquerade as available
+  useEffect(() => {
+    if (!rvmsWithDistance || rvmsWithDistance.length === 0) return;
+    const candidates = rvmsWithDistance.slice(0, 3);
+    for (const c of candidates) {
+      enrichTargetRvm(c.id, false);
+    }
+  }, [rvmsWithDistance, enrichTargetRvm]);
+
+  // When modal machine opens, ensure fresh telemetry is fetched
+  useEffect(() => {
+    if (modalRVM?.id) {
+      enrichTargetRvm(modalRVM.id, false);
+    }
+  }, [modalRVM?.id, enrichTargetRvm]);
 
   // Focus on map handler
   const handleFocusRVMOnMap = (rvm: RVM) => {
