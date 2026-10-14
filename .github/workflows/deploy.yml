@@ -2,8 +2,8 @@ name: Deploy to GitHub Pages
 
 on:
   schedule:
-    # Run every 5 minutes with offset minutes (2, 7, 12...) to avoid peak-minute runner congestion
-    - cron: '2,7,12,17,22,27,32,37,42,47,52,57 * * * *'
+    # Run every 10 minutes to auto-sync fresh machine statuses
+    - cron: '*/10 * * * *'
   push:
     branches:
       - main
@@ -40,13 +40,13 @@ jobs:
       - name: Fetch Live BCRS Statuses & Build
         run: npm run build
 
-      - name: Commit updated seed data (on schedule only)
-        if: github.event_name == 'schedule'
+      - name: Commit updated seed data (on schedule or dispatch)
+        if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add public/data/seed-rvms.json src/data/seed-rvms.json
-          git diff --quiet && git diff --staged --quiet || (git commit -m "chore(data): auto-sync live BCRS statuses [skip ci]" && git push)
+          git diff --quiet && git diff --staged --quiet || (git commit -m "chore(data): auto-sync live BCRS statuses [skip ci]" && git pull --rebase origin main && git push)
 
       - name: Setup GitHub Pages
         uses: actions/configure-pages@v5

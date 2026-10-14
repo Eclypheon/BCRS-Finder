@@ -73,7 +73,6 @@ export async function fetchAllRVMs(forceRefresh = false, signal?: AbortSignal): 
   const edgeProxyBase = getEdgeProxyBase();
   const proxyEndpoints = [
     edgeProxyBase ? `${edgeProxyBase}/api/rvms${forceRefresh ? '?refresh=true' : ''}` : null,
-    edgeProxyBase ? `${edgeProxyBase}${forceRefresh ? '?refresh=true' : ''}` : null,
     `/api/rvms${forceRefresh ? '?refresh=true' : ''}`,
   ].filter(Boolean) as string[];
 
@@ -81,7 +80,7 @@ export async function fetchAllRVMs(forceRefresh = false, signal?: AbortSignal): 
     if (signal?.aborted) throw new DOMException('Aborted', 'AbortError');
     try {
       const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 6500);
+      const timeoutId = setTimeout(() => controller.abort(), 2500);
       const onAbort = () => controller.abort();
       if (signal) signal.addEventListener('abort', onAbort, { once: true });
 
@@ -185,33 +184,46 @@ export async function fetchRvmBinStatus(
 
   const endpoints = [
     edgeProxyBase ? `${edgeProxyBase}/api/rvms/${rvmId}/bin-status${qs}` : null,
-    edgeProxyBase ? `${edgeProxyBase}?rvmId=${rvmId}${ampQs}` : null,
     `/api/rvms/${rvmId}/bin-status${qs}`,
   ].filter(Boolean) as string[];
 
   for (const url of endpoints) {
     if (signal?.aborted) throw new DOMException('Aborted', 'AbortError');
     try {
+      const endpointController = new AbortController();
+      const timeoutId = setTimeout(() => endpointController.abort(), 2500);
+      const onAbort = () => endpointController.abort();
+      if (signal) signal.addEventListener('abort', onAbort, { once: true });
+
       let res = await fetch(url, {
-        signal,
+        signal: endpointController.signal,
         cache: forceRefresh ? 'no-store' : 'default',
         headers: {
           Accept: 'application/json',
           'Cache-Control': forceRefresh ? 'no-cache, no-store' : 'default',
         },
       });
+      clearTimeout(timeoutId);
+      if (signal) signal.removeEventListener('abort', onAbort);
 
       if (res.ok) {
         let json = await res.json();
 
-        // If edge proxy returned a token error and we didn't force refresh yet, retry with refresh=true
+        // If edge proxy returned a token error and we didn't force refresh yet, retry once with refresh=true
         if (json && json.status === 'error' && !forceRefresh && url.includes(edgeProxyBase)) {
           const retryUrl = url.includes('?') ? `${url}&refresh=true` : `${url}?refresh=true`;
+          const retryController = new AbortController();
+          const retryTimeoutId = setTimeout(() => retryController.abort(), 2500);
+          const onRetryAbort = () => retryController.abort();
+          if (signal) signal.addEventListener('abort', onRetryAbort, { once: true });
+
           const retryRes = await fetch(retryUrl, {
-            signal,
+            signal: retryController.signal,
             cache: 'no-store',
             headers: { Accept: 'application/json', 'Cache-Control': 'no-cache, no-store' },
           });
+          clearTimeout(retryTimeoutId);
+          if (signal) signal.removeEventListener('abort', onRetryAbort);
           if (retryRes.ok) {
             json = await retryRes.json();
           }
