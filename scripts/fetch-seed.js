@@ -4,6 +4,9 @@
 const fs = require('fs');
 const path = require('path');
 
+// Service states where the machine is not usable; sensor readings must not override them
+const OUT_OF_SERVICE = ['OFFLINE', 'CLEANING', 'SUSPENDED', 'MAINTENANCE', 'ERROR', 'UNKNOWN'];
+
 const HEADERS = {
   'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36',
   'x-bcrs-client': 'web',
@@ -64,7 +67,7 @@ async function fetchSeed() {
     let status = 'RUNNING';
     if (['FULL'].includes(rawStatus)) {
       status = 'FULL';
-    } else if (['OFFLINE', 'CLEANING', 'SUSPENDED', 'MAINTENANCE', 'ERROR', 'UNKNOWN'].includes(rawStatus)) {
+    } else if (OUT_OF_SERVICE.includes(rawStatus)) {
       status = rawStatus;
     } else {
       status = 'RUNNING';
@@ -123,8 +126,9 @@ async function fetchSeed() {
               rvm.updated_at = freshestTime;
             }
 
-            // Real-time sensor threshold takes absolute precedence over bulk list lag
-            if (maxPct >= 100) {
+            // Real-time sensor threshold takes absolute precedence over bulk list lag, but an
+            // offline/error machine stays offline even with a 100% sensor reading
+            if (maxPct >= 100 && !OUT_OF_SERVICE.includes(rvm.status)) {
               rvm.status = 'FULL';
               rvm.rawStatus = 'FULL';
               fullCount++;

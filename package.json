@@ -9,7 +9,8 @@
     "build": "node scripts/fetch-seed.js && tsc && vite build",
     "preview": "vite preview",
     "start": "NODE_ENV=production node server/index.js",
-    "fetch-seed": "node scripts/fetch-seed.js"
+    "fetch-seed": "node scripts/fetch-seed.js",
+    "check": "node scripts/check-status-merge.mjs"
   },
   "keywords": [],
   "author": "",

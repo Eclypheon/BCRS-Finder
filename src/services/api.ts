@@ -1,4 +1,5 @@
 import { RVM, BinStatusItem } from '../types/rvm';
+import { mergeWithRichSeed } from '../utils/statusMerge.mts';
 import fallbackSeed from '../data/seed-rvms.json';
 
 const LOCAL_STORAGE_RVM_KEY = 'bcrs_rvms_cache_v6';
@@ -15,47 +16,6 @@ function sanitizeRvms(items: any[]): RVM[] {
     const { updated_at: _d1, updatedAt: _d2, ...rest } = item;
     const { last_updated: _d3, ...pureRest } = rest;
     return pureRest as RVM;
-  });
-}
-
-// Merge incoming location items with enriched seed telemetry so full bins never get downgraded by summary lag
-function mergeWithRichSeed(liveItems: RVM[], seedItems: RVM[] = fallbackSeed as RVM[]): RVM[] {
-  if (!Array.isArray(liveItems)) return [];
-  const seedMap = new Map((seedItems || []).map((s) => [s.id, s]));
-
-  return liveItems.map((live) => {
-    const seed = seedMap.get(live.id);
-    if (!seed) return live;
-
-    const hasLiveTelemetry = Boolean(live.binStatusDetails && live.binStatusDetails.length > 0);
-    const effectiveDetails = hasLiveTelemetry ? live.binStatusDetails : seed.binStatusDetails;
-    const effectiveFillPct = typeof live.binFillPct === 'number' ? live.binFillPct : seed.binFillPct;
-    const effectiveTimestamp =
-      live.last_updated ||
-      seed.last_updated ||
-      seed.updated_at;
-
-    // Upstream live status has highest priority if it explicitly reports FULL/OFFLINE/ERROR.
-    // If upstream live status says RUNNING but sensor telemetry proves it is >= 100%, mark FULL.
-    const isFull =
-      (typeof effectiveFillPct === 'number' && effectiveFillPct >= 100) ||
-      live.status === 'FULL' ||
-      live.rawStatus === 'FULL' ||
-      seed.status === 'FULL';
-
-    const status = isFull ? 'FULL' : live.status;
-    const rawStatus = isFull ? 'FULL' : live.rawStatus;
-
-    return {
-      ...seed,
-      ...live,
-      status,
-      rawStatus,
-      binStatusDetails: effectiveDetails,
-      binFillPct: effectiveFillPct,
-      last_updated: effectiveTimestamp,
-      updated_at: effectiveTimestamp,
-    };
   });
 }
 
@@ -137,7 +97,7 @@ export async function fetchAllRVMs(forceRefresh = false, signal?: AbortSignal): 
       if (res.ok) {
         const json = await res.json();
         if (json && json.status === 'ok' && Array.isArray(json.data) && json.data.length > 0) {
-          const merged = mergeWithRichSeed(json.data);
+          const merged = mergeWithRichSeed(json.data, fallbackSeed as RVM[]);
           const sanitized = sanitizeRvms(merged);
           try {
             localStorage.setItem(LOCAL_STORAGE_RVM_KEY, JSON.stringify(sanitized));
