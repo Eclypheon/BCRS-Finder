@@ -1,9 +1,9 @@
 import React, { useEffect, useRef, useState, useCallback } from 'react';
 import L from 'leaflet';
 import { RVM, UserLocation, FilterOption } from '../types/rvm';
-import { getMachineStatusInfo, calculateBearingDegrees } from '../utils/geo';
+import { getMachineStatusInfo } from '../utils/geo';
 import { fetchWalkingRoute, WalkingRouteResult } from '../services/routing';
-import { Compass, Locate, Filter, Layers } from 'lucide-react';
+import { Compass, Locate, Layers } from 'lucide-react';
 
 interface MapViewProps {
   userLocation: UserLocation | null;
@@ -57,6 +57,7 @@ export const MapView: React.FC<MapViewProps> = ({
   const mapContainerRef = useRef<HTMLDivElement>(null);
   const mapInstanceRef = useRef<L.Map | null>(null);
   const userMarkerRef = useRef<L.Marker | null>(null);
+  const locationSourceRef = useRef<string>('');
   const markersLayerRef = useRef<L.LayerGroup | null>(null);
   const routeLayerRef = useRef<L.LayerGroup | null>(null);
   const canvasRendererRef = useRef<L.Canvas | null>(null);
@@ -84,41 +85,30 @@ export const MapView: React.FC<MapViewProps> = ({
     }
   }, []);
 
-  // Compute effective heading (device compass if available, otherwise azimuth to target machine)
-  const effectiveHeading = React.useMemo(() => {
-    if (deviceHeading !== null) return deviceHeading;
-    if (userLocation && targetRVM) {
-      return Math.round(
-        calculateBearingDegrees(
-          userLocation.latitude,
-          userLocation.longitude,
-          targetRVM.latitude,
-          targetRVM.longitude
-        )
-      );
-    }
-    return null;
-  }, [deviceHeading, userLocation, targetRVM]);
-
-  // Listen to device orientation / compass sensor
+  // Listen to device orientation / compass sensor, and point the arrow where the user faces
+  // (prefers the absolute, true-north reading so the heading is never offset by the start position)
   useEffect(() => {
     let lastHeading = -1;
 
-    const handleOrientation = (e: DeviceOrientationEvent) => {
-      let currentHeading: number | null = null;
-      if (typeof (e as any).webkitCompassHeading === 'number') {
-        currentHeading = (e as any).webkitCompassHeading;
-      } else if (typeof e.alpha === 'number') {
-        currentHeading = (360 - e.alpha) % 360;
+    const applyHeading = (raw: number) => {
+      if (isNaN(raw)) return;
+      const rounded = Math.round((raw + 360) % 360) % 360;
+      // Compare the short way around the circle so 359deg -> 0deg still passes the threshold
+      const delta = Math.abs(((rounded - lastHeading + 540) % 360) - 180);
+      if (delta > 1.5) {
+        lastHeading = rounded;
+        setDeviceHeading(rounded);
       }
+    };
 
-      if (currentHeading !== null && !isNaN(currentHeading)) {
-        const rounded = Math.round(currentHeading) % 360;
-        if (Math.abs(rounded - lastHeading) > 1.5) {
-          lastHeading = rounded;
-          setDeviceHeading(rounded);
-        }
+    const handleOrientation = (e: DeviceOrientationEvent) => {
+      const compass = (e as any).webkitCompassHeading;
+      if (typeof compass === 'number') {
+        applyHeading(compass); // iOS reports the true-north compass heading directly
+      } else if ((e as any).absolute === true && typeof e.alpha === 'number') {
+        applyHeading(360 - e.alpha);
       }
+      // Relative alpha (no true-north reference) is ignored so the arrow never points wrong
     };
 
     window.addEventListener('deviceorientation', handleOrientation as any, true);
@@ -132,6 +122,36 @@ export const MapView: React.FC<MapViewProps> = ({
         window.removeEventListener('deviceorientationabsolute', handleOrientation as any, true);
       }
     };
+  }, []);
+
+  // Ask for motion & orientation access as soon as the app starts. iOS only grants it during a
+  // tap, so a rejected silent attempt retries on the first touch / click anywhere.
+  useEffect(() => {
+    const DOE = (window as any).DeviceOrientationEvent;
+    if (typeof DOE?.requestPermission !== 'function') return;
+
+    const stopListening = () => {
+      window.removeEventListener('pointerdown', ask, true);
+      window.removeEventListener('touchend', ask, true);
+      window.removeEventListener('click', ask, true);
+    };
+
+    const ask = async () => {
+      try {
+        const result = await DOE.requestPermission();
+        stopListening();
+        if (result !== 'granted') console.info('Motion & orientation permission:', result);
+      } catch {
+        // iOS rejects without a user gesture — the listeners above retry on the next tap
+      }
+    };
+
+    ask();
+    window.addEventListener('pointerdown', ask, true);
+    window.addEventListener('touchend', ask, true);
+    window.addEventListener('click', ask, true);
+
+    return stopListening;
   }, []);
 
   // Fetch walking path using OpenStreetMap OSRM routing
@@ -288,18 +308,20 @@ export const MapView: React.FC<MapViewProps> = ({
     setTimeout(updateRecenterPosition, 100);
   }, [mapStyle, updateRecenterPosition]);
 
-  // Update User Marker with Direction Facing Arrow & center map when user location changes
+  // Update the user marker as the location changes (arrow rotation is handled below so it stays smooth)
   useEffect(() => {
     const map = mapInstanceRef.current;
     if (!map || !userLocation) return;
 
     const userLatLng: L.LatLngExpression = [userLocation.latitude, userLocation.longitude];
 
-    // Pulsing dot + directional blue beam / arrow (Google Maps style)
-    const userHtml = `
-      <div class="user-location-marker relative flex items-center justify-center w-12 h-12 pointer-events-none">
-        ${effectiveHeading !== null ? `
-          <div class="absolute inset-0 flex items-center justify-center pointer-events-none transition-transform duration-150 ease-out" style="transform: rotate(${effectiveHeading}deg);">
+    if (userMarkerRef.current) {
+      userMarkerRef.current.setLatLng(userLatLng);
+    } else {
+      // Pulsing dot + directional beam (Google Maps style)
+      const userHtml = `
+        <div class="user-location-marker relative flex items-center justify-center w-12 h-12 pointer-events-none">
+          <div data-heading class="absolute inset-0 items-center justify-center pointer-events-none transition-transform duration-150 ease-out" style="display: none;">
             <svg class="w-12 h-12 pointer-events-none drop-shadow" viewBox="0 0 48 48" fill="none">
               <!-- Directional beam cone -->
               <path d="M24 24 L13 5 A 21 21 0 0 1 35 5 Z" fill="rgba(56, 189, 248, 0.38)" />
@@ -307,27 +329,19 @@ export const MapView: React.FC<MapViewProps> = ({
               <polygon points="24,1 29,11 24,8.5 19,11" fill="#0284c7" stroke="#ffffff" stroke-width="1.2" stroke-linejoin="round" />
             </svg>
           </div>
-        ` : `
           <div class="absolute w-7 h-7 rounded-full bg-blue-500/40 animate-ping"></div>
-        `}
-        <!-- Center blue location dot -->
-        <div class="relative w-4 h-4 rounded-full bg-blue-500 border-2 border-white shadow-lg shadow-blue-500/60 z-10"></div>
-      </div>
-    `;
+          <!-- Center blue location dot -->
+          <div class="relative w-4 h-4 rounded-full bg-blue-500 border-2 border-white shadow-lg shadow-blue-500/60 z-10"></div>
+        </div>
+      `;
 
-    const userIcon = L.divIcon({
-      html: userHtml,
-      className: 'user-marker-container',
-      iconSize: [48, 48],
-      iconAnchor: [24, 24],
-    });
-
-    if (userMarkerRef.current) {
-      userMarkerRef.current.setLatLng(userLatLng);
-      userMarkerRef.current.setIcon(userIcon);
-    } else {
       userMarkerRef.current = L.marker(userLatLng, {
-        icon: userIcon,
+        icon: L.divIcon({
+          html: userHtml,
+          className: 'user-marker-container',
+          iconSize: [48, 48],
+          iconAnchor: [24, 24],
+        }),
         zIndexOffset: 1000,
       }).addTo(map);
 
@@ -339,9 +353,27 @@ export const MapView: React.FC<MapViewProps> = ({
       );
     }
 
-    // Pan map to user at default zoom
-    map.setView(userLatLng, DEFAULT_ZOOM, { animate: true });
-  }, [userLocation, effectiveHeading]);
+    // Recenter only when the location source changes (first GPS fix, postal lookup), so live
+    // GPS updates don't keep yanking the map away while the user pans around
+    const sourceKey = userLocation.isLiveGps ? 'live' : `${userLocation.latitude},${userLocation.longitude}`;
+    if (locationSourceRef.current !== sourceKey) {
+      locationSourceRef.current = sourceKey;
+      map.setView(userLatLng, DEFAULT_ZOOM, { animate: true });
+    }
+  }, [userLocation]);
+
+  // Rotate the arrow to the direction the phone is facing, in every map mode
+  useEffect(() => {
+    const el = userMarkerRef.current?.getElement()?.querySelector<HTMLElement>('[data-heading]');
+    if (!el) return;
+
+    if (deviceHeading === null) {
+      el.style.display = 'none';
+      return;
+    }
+    el.style.display = 'flex';
+    el.style.transform = `rotate(${deviceHeading}deg)`;
+  }, [deviceHeading, userLocation]);
 
   // Fly to focused RVM if requested
   useEffect(() => {
@@ -410,21 +442,7 @@ export const MapView: React.FC<MapViewProps> = ({
   };
 
   // Toggle between North-Up (default) and Heading-Up (direction you are facing)
-  const toggleCompassMode = async () => {
-    // Request permission on iOS 13+ if needed
-    if (typeof (DeviceOrientationEvent as any)?.requestPermission === 'function') {
-      try {
-        const response = await (DeviceOrientationEvent as any).requestPermission();
-        if (response !== 'granted') {
-          console.info('Device orientation permission denied');
-        }
-      } catch (err) {
-        console.warn('Orientation permission error:', err);
-      }
-    }
-
-    setIsHeadingUp((prev) => !prev);
-  };
+  const toggleCompassMode = () => setIsHeadingUp((prev) => !prev);
 
   // Status Counts for Legend
   const counts = React.useMemo(() => {
@@ -447,9 +465,7 @@ export const MapView: React.FC<MapViewProps> = ({
         ref={mapContainerRef}
         className="w-full h-full z-0 origin-center transition-transform duration-300 ease-out"
         style={
-          isHeadingUp && effectiveHeading !== null
-            ? { transform: `rotate(${-effectiveHeading}deg) scale(1.42)` }
-            : { transform: 'rotate(0deg) scale(1)' }
+          isHeadingUp && deviceHeading !== null ? { transform: `rotate(${-deviceHeading}deg) scale(1.42)` } : { transform: 'rotate(0deg) scale(1)' }
         }
       />
 
@@ -552,7 +568,7 @@ export const MapView: React.FC<MapViewProps> = ({
                 isHeadingUp ? 'text-white' : 'text-rose-400'
               }`}
               style={{
-                transform: `rotate(${isHeadingUp ? 0 : -(effectiveHeading || 0)}deg)`,
+                transform: `rotate(${isHeadingUp ? 0 : -(deviceHeading || 0)}deg)`,
               }}
             />
             <span>{isHeadingUp ? 'Heading Up' : 'North Up'}</span>

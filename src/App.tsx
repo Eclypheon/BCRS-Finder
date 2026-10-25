@@ -38,6 +38,9 @@ export const App: React.FC = () => {
   const loadRvmsSeqRef = useRef<number>(0);
   const loadRvmsAbortControllerRef = useRef<AbortController | null>(null);
   const binStatusSeqRef = useRef<Map<number, number>>(new Map());
+  const geoWatchIdRef = useRef<number | null>(null);
+  // True once the user picks a postal code, so live GPS stops overwriting it
+  const manualLocationRef = useRef(false);
   const binStatusAbortControllers = useRef<Map<number, AbortController>>(new Map());
   const lastFetchedTelemetryMs = useRef<Map<number, number>>(new Map());
   const activeTargetIdRef = useRef<number | null>(null);
@@ -271,48 +274,63 @@ export const App: React.FC = () => {
     requestLiveLocation(true); // silent attempt on initial load
   }, []);
 
-  // 2. Request Live Geolocation
-  const requestLiveLocation = useCallback(async (silent = false) => {
+  // 2. Follow Live Geolocation (continuous watch, so the dot moves as the user walks)
+  const requestLiveLocation = useCallback((silent = false) => {
     if (!navigator.geolocation) {
       if (!silent) setErrorMessage('Geolocation is not supported by your browser.');
       setUserLocation(DEFAULT_SG_LOCATION);
       return;
     }
 
-    setIsLoadingLocation(true);
+    manualLocationRef.current = false;
     if (!silent) setErrorMessage(null);
 
-    navigator.geolocation.getCurrentPosition(
+    // Keep a single watch running; it survives until permission is denied
+    if (geoWatchIdRef.current !== null) return;
+
+    setIsLoadingLocation(true);
+    geoWatchIdRef.current = navigator.geolocation.watchPosition(
       (position) => {
-        const { latitude, longitude, accuracy } = position.coords;
-        setUserLocation({
-          latitude,
-          longitude,
-          label: 'Live Location',
-          isLiveGps: true,
-          accuracy,
-        });
         setIsLoadingLocation(false);
+        if (manualLocationRef.current) return;
+        const { latitude, longitude, accuracy } = position.coords;
+        setUserLocation((current) =>
+          current.isLiveGps &&
+          Math.abs(current.latitude - latitude) < 1e-6 &&
+          Math.abs(current.longitude - longitude) < 1e-6
+            ? current
+            : { latitude, longitude, label: 'Live Location', isLiveGps: true, accuracy }
+        );
       },
       (error) => {
         setIsLoadingLocation(false);
         console.info('Geolocation error / permission:', error.message);
-        if (!silent) {
-          if (error.code === error.PERMISSION_DENIED) {
-            setErrorMessage('Location permission denied. Enter your postal code above.');
-          } else {
-            setErrorMessage('Unable to retrieve GPS position. Enter your postal code above.');
+        if (error.code === error.PERMISSION_DENIED) {
+          // Terminal: stop watching so the Live GPS button can retry cleanly
+          if (geoWatchIdRef.current !== null) {
+            navigator.geolocation.clearWatch(geoWatchIdRef.current);
+            geoWatchIdRef.current = null;
           }
+          if (!silent) setErrorMessage('Location permission denied. Enter your postal code above.');
+          return;
         }
-        // Fall back to default location if no location set yet
-        setUserLocation((current) => current || DEFAULT_SG_LOCATION);
+        if (!silent) setErrorMessage('Unable to retrieve GPS position. Enter your postal code above.');
       },
       {
         enableHighAccuracy: true,
-        timeout: 10000,
-        maximumAge: 30000,
+        maximumAge: 5000,
       }
     );
+  }, []);
+
+  // Stop the GPS watch when the app unmounts
+  useEffect(() => {
+    return () => {
+      if (geoWatchIdRef.current !== null) {
+        navigator.geolocation?.clearWatch(geoWatchIdRef.current);
+        geoWatchIdRef.current = null;
+      }
+    };
   }, []);
 
   // 3. Search by Postal Code
@@ -327,6 +345,8 @@ export const App: React.FC = () => {
         return;
       }
 
+      // A chosen postal code wins over live GPS until the user asks for Live again
+      manualLocationRef.current = true;
       setUserLocation({
         latitude: result.latitude,
         longitude: result.longitude,

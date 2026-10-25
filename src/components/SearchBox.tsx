@@ -5,7 +5,7 @@ import { UserLocation } from '../types/rvm';
 interface SearchBoxProps {
   userLocation: UserLocation | null;
   onSearchPostal: (postal: string) => Promise<void>;
-  onGetLiveLocation: () => Promise<void>;
+  onGetLiveLocation: () => void;
   isLoadingLocation: boolean;
   isLoadingPostal: boolean;
   errorMessage: string | null;
