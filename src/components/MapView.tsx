@@ -245,6 +245,7 @@ export const MapView: React.FC<MapViewProps> = ({
     return () => {
       map.remove();
       mapInstanceRef.current = null;
+      userMarkerRef.current = null;
     };
   }, [updateRecenterPosition]);
 
@@ -327,14 +328,38 @@ export const MapView: React.FC<MapViewProps> = ({
     if (!map || !userLocation) return;
 
     const userLatLng: L.LatLngExpression = [userLocation.latitude, userLocation.longitude];
+    const isLive = Boolean(userLocation.isLiveGps);
+    const title = isLive ? 'Your Location' : 'Searched Location';
+    const subtitle = userLocation.label || userLocation.postalCode || (isLive ? 'Current Position' : 'Searched Position');
+    const tooltipHtml = `<div class="font-bold text-xs">${title}</div><div class="text-[11px] text-slate-400">${subtitle}</div>`;
 
     if (userMarkerRef.current) {
       userMarkerRef.current.setLatLng(userLatLng);
+
+      const markerEl = userMarkerRef.current.getElement();
+      if (markerEl) {
+        const pingEl = markerEl.querySelector<HTMLElement>('[data-ping]');
+        if (pingEl) {
+          pingEl.style.display = isLive ? '' : 'none';
+        }
+
+        const headingEl = markerEl.querySelector<HTMLElement>('[data-heading]');
+        if (headingEl) {
+          if (!isLive || deviceHeading === null) {
+            headingEl.style.display = 'none';
+          } else {
+            headingEl.style.display = 'flex';
+            headingEl.style.transform = `rotate(${deviceHeading}deg)`;
+          }
+        }
+      }
+
+      userMarkerRef.current.setTooltipContent(tooltipHtml);
     } else {
       // Pulsing dot + directional beam (Google Maps style)
       const userHtml = `
         <div class="user-location-marker relative flex items-center justify-center w-12 h-12 pointer-events-none">
-          <div data-heading class="absolute inset-0 items-center justify-center pointer-events-none transition-transform duration-150 ease-out" style="display: none;">
+          <div data-heading class="absolute inset-0 items-center justify-center pointer-events-none transition-transform duration-150 ease-out" style="${isLive && deviceHeading !== null ? `transform: rotate(${deviceHeading}deg);` : 'display: none;'}">
             <svg class="w-12 h-12 pointer-events-none drop-shadow" viewBox="0 0 48 48" fill="none">
               <!-- Directional beam cone -->
               <path d="M24 24 L13 5 A 21 21 0 0 1 35 5 Z" fill="rgba(56, 189, 248, 0.38)" />
@@ -342,7 +367,7 @@ export const MapView: React.FC<MapViewProps> = ({
               <polygon points="24,1 29,11 24,8.5 19,11" fill="#0284c7" stroke="#ffffff" stroke-width="1.2" stroke-linejoin="round" />
             </svg>
           </div>
-          <div class="absolute w-7 h-7 rounded-full bg-blue-500/40 animate-ping"></div>
+          <div data-ping class="absolute w-7 h-7 rounded-full bg-blue-500/40 animate-ping" style="${isLive ? '' : 'display: none;'}"></div>
           <!-- Center blue location dot -->
           <div class="relative w-4 h-4 rounded-full bg-blue-500 border-2 border-white shadow-lg shadow-blue-500/60 z-10"></div>
         </div>
@@ -358,12 +383,10 @@ export const MapView: React.FC<MapViewProps> = ({
         zIndexOffset: 1000,
       }).addTo(map);
 
-      userMarkerRef.current.bindTooltip(
-        `<div class="font-bold text-xs">Your Location</div><div class="text-[11px] text-slate-400">${
-          userLocation.label || userLocation.postalCode || 'Current Position'
-        }</div>`,
-        { direction: 'top', offset: [0, -14] }
-      );
+      userMarkerRef.current.bindTooltip(tooltipHtml, {
+        direction: 'top',
+        offset: [0, -14],
+      });
     }
 
     // In live GPS mode, keep map centered on user's location as they move (default follow behavior).
@@ -386,20 +409,20 @@ export const MapView: React.FC<MapViewProps> = ({
         setIsFollowingUser(false);
       }
     }
-  }, [userLocation]);
+  }, [userLocation, deviceHeading]);
 
-  // Rotate the arrow to the direction the phone is facing, in every map mode
+  // Rotate the arrow to the direction the phone is facing ONLY when live GPS is active
   useEffect(() => {
     const el = userMarkerRef.current?.getElement()?.querySelector<HTMLElement>('[data-heading]');
     if (!el) return;
 
-    if (deviceHeading === null) {
+    if (!userLocation?.isLiveGps || deviceHeading === null) {
       el.style.display = 'none';
       return;
     }
     el.style.display = 'flex';
     el.style.transform = `rotate(${deviceHeading}deg)`;
-  }, [deviceHeading, userLocation]);
+  }, [deviceHeading, userLocation?.isLiveGps]);
 
   // Fly to focused RVM if requested
   useEffect(() => {
