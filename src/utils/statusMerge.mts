@@ -1,4 +1,4 @@
-import type { RVM } from '../types/rvm';
+import type { RVM, BinStatusItem } from '../types/rvm';
 
 // Upstream service states: the machine is not usable, so telemetry must never talk over them
 export const OUT_OF_SERVICE_STATUSES = [
@@ -12,6 +12,43 @@ export const OUT_OF_SERVICE_STATUSES = [
 
 export function isOutOfService(status?: string | null): boolean {
   return OUT_OF_SERVICE_STATUSES.includes((status || '').trim().toUpperCase());
+}
+
+// Apply live sensor telemetry to an individual RVM
+export function applyTelemetryToRvm(rvm: RVM, binItems: BinStatusItem[]): RVM {
+  if (!Array.isArray(binItems) || binItems.length === 0) return rvm;
+
+  const maxPct = Math.max(
+    ...binItems.map((b) => (typeof b.threshold_level === 'number' ? b.threshold_level : 0))
+  );
+
+  const validTimestamps = binItems
+    .map((b) => b.last_updated)
+    .filter((t): t is string => Boolean(t && !isNaN(new Date(t).getTime())));
+  validTimestamps.sort((a, b) => new Date(b).getTime() - new Date(a).getTime());
+  const freshestTime = validTimestamps[0] || null;
+
+  const existingTimestamp =
+    rvm.last_updated ||
+    rvm.binStatusDetails?.find((b) => b.last_updated)?.last_updated;
+  const newestTime = freshestTime || existingTimestamp;
+
+  const outOfService = isOutOfService(rvm.rawStatus) || isOutOfService(rvm.status);
+  const isFull = maxPct >= 100;
+
+  // Never overwrite an out-of-service machine to RUNNING or FULL
+  const nextStatus = outOfService ? rvm.status : isFull ? 'FULL' : 'RUNNING';
+  const nextRawStatus = outOfService ? rvm.rawStatus : isFull ? 'FULL' : 'RUNNING';
+
+  return {
+    ...rvm,
+    status: nextStatus,
+    rawStatus: nextRawStatus,
+    binStatusDetails: binItems,
+    binFillPct: maxPct,
+    last_updated: newestTime,
+    updated_at: newestTime,
+  };
 }
 
 // Merge incoming location items with enriched seed telemetry so full bins never get downgraded by summary lag

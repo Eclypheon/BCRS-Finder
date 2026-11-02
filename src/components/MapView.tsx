@@ -12,6 +12,7 @@ interface MapViewProps {
   focusedRVM: RVM | null;
   onClearFocus: () => void;
   targetRVM?: RVM | null;
+  onRecenter?: () => void;
 }
 
 interface TileLayerConfig {
@@ -53,6 +54,7 @@ export const MapView: React.FC<MapViewProps> = ({
   focusedRVM,
   onClearFocus,
   targetRVM,
+  onRecenter,
 }) => {
   const mapContainerRef = useRef<HTMLDivElement>(null);
   const mapInstanceRef = useRef<L.Map | null>(null);
@@ -68,6 +70,12 @@ export const MapView: React.FC<MapViewProps> = ({
   const [walkingRoute, setWalkingRoute] = useState<WalkingRouteResult | null>(null);
   const [deviceHeading, setDeviceHeading] = useState<number | null>(null);
   const [isHeadingUp, setIsHeadingUp] = useState<boolean>(false);
+  const [isFollowingUser, setIsFollowingUser] = useState<boolean>(true);
+  const isFollowingUserRef = useRef<boolean>(true);
+
+  useEffect(() => {
+    isFollowingUserRef.current = isFollowingUser;
+  }, [isFollowingUser]);
 
   const DEFAULT_ZOOM = 16; // 3 zooms out from OSM maxZoom 19
 
@@ -223,6 +231,11 @@ export const MapView: React.FC<MapViewProps> = ({
     const markersGroup = L.layerGroup().addTo(map);
     markersLayerRef.current = markersGroup;
 
+    // When the user manually drags the map, pause auto-following
+    map.on('dragstart', () => {
+      setIsFollowingUser(false);
+    });
+
     mapInstanceRef.current = map;
 
     // Trigger alignment once controls are attached
@@ -353,12 +366,25 @@ export const MapView: React.FC<MapViewProps> = ({
       );
     }
 
-    // Recenter only when the location source changes (first GPS fix, postal lookup), so live
-    // GPS updates don't keep yanking the map away while the user pans around
-    const sourceKey = userLocation.isLiveGps ? 'live' : `${userLocation.latitude},${userLocation.longitude}`;
-    if (locationSourceRef.current !== sourceKey) {
-      locationSourceRef.current = sourceKey;
-      map.setView(userLatLng, DEFAULT_ZOOM, { animate: true });
+    // In live GPS mode, keep map centered on user's location as they move (default follow behavior).
+    // If user searched a postal code / custom location, center once on that location and disable follow mode.
+    if (userLocation.isLiveGps) {
+      const isInitialLive = locationSourceRef.current !== 'live';
+      if (isInitialLive) {
+        locationSourceRef.current = 'live';
+        map.setView(userLatLng, DEFAULT_ZOOM, { animate: true });
+        setIsFollowingUser(true);
+      } else if (isFollowingUserRef.current) {
+        // Smoothly pan map as user walks/moves without resetting user's zoom level
+        map.panTo(userLatLng, { animate: true, duration: 0.5 });
+      }
+    } else {
+      const sourceKey = `${userLocation.latitude},${userLocation.longitude}`;
+      if (locationSourceRef.current !== sourceKey) {
+        locationSourceRef.current = sourceKey;
+        map.setView(userLatLng, DEFAULT_ZOOM, { animate: true });
+        setIsFollowingUser(false);
+      }
     }
   }, [userLocation]);
 
@@ -384,6 +410,7 @@ export const MapView: React.FC<MapViewProps> = ({
       duration: 1.2,
       easeLinearity: 0.25,
     });
+    setIsFollowingUser(false);
     onClearFocus();
   }, [focusedRVM, onClearFocus]);
 
@@ -434,6 +461,10 @@ export const MapView: React.FC<MapViewProps> = ({
 
   // Recenter button click handler
   const handleRecenter = () => {
+    setIsFollowingUser(true);
+    if (onRecenter) {
+      onRecenter();
+    }
     const map = mapInstanceRef.current;
     if (!map || !userLocation) return;
     map.flyTo([userLocation.latitude, userLocation.longitude], DEFAULT_ZOOM, {
@@ -546,10 +577,23 @@ export const MapView: React.FC<MapViewProps> = ({
           <button
             type="button"
             onClick={handleRecenter}
-            className="flex items-center gap-1.5 px-2.5 py-1.5 bg-slate-900/95 hover:bg-slate-800 active:bg-slate-700 text-slate-200 hover:text-white border border-slate-800/90 rounded-xl shadow-xl shadow-black/50 text-[11px] font-bold backdrop-blur-md transition-all cursor-pointer group"
+            title={
+              isFollowingUser && userLocation?.isLiveGps
+                ? 'Following your movement • Tap to re-center'
+                : 'Center on your location'
+            }
+            className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl shadow-xl shadow-black/50 text-[11px] font-bold backdrop-blur-md transition-all cursor-pointer group border ${
+              isFollowingUser && userLocation?.isLiveGps
+                ? 'bg-blue-600/25 hover:bg-blue-600/35 text-blue-200 border-blue-500/50'
+                : 'bg-slate-900/95 hover:bg-slate-800 active:bg-slate-700 text-slate-200 hover:text-white border-slate-800/90'
+            }`}
           >
-            <Locate className="w-3.5 h-3.5 text-blue-400 group-hover:scale-110 transition-transform" />
-            <span>Recenter</span>
+            <Locate
+              className={`w-3.5 h-3.5 text-blue-400 ${
+                isFollowingUser && userLocation?.isLiveGps ? 'scale-110 text-blue-300' : 'group-hover:scale-110'
+              } transition-transform`}
+            />
+            <span>{isFollowingUser && userLocation?.isLiveGps ? 'Tracking' : 'Recenter'}</span>
           </button>
 
           {/* Compass Button below Recenter */}

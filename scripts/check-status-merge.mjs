@@ -3,7 +3,7 @@
 // and the next telemetry refresh then flipped the machine to "In Operation".
 // Run: npm run check
 import assert from 'node:assert/strict';
-import { mergeWithRichSeed } from '../src/utils/statusMerge.mts';
+import { mergeWithRichSeed, applyTelemetryToRvm } from '../src/utils/statusMerge.mts';
 
 const liveBase = {
   id: 1220,
@@ -44,5 +44,26 @@ const [enriched] = mergeWithRichSeed(
 );
 assert.equal(enriched.status, 'FULL', 'seed 100% still marks a running machine full');
 assert.equal(enriched.binFillPct, 100);
+
+// 4. applyTelemetryToRvm tests
+// 4a. Sensor fill >= 100% on running machine flips status to FULL
+const runningMachine = { ...liveBase, status: 'RUNNING', rawStatus: 'RUNNING' };
+const fullTelemetry = [{ compartment_type: 'CAN PET', threshold_level: 100, last_updated: '2026-10-25T12:00:00.000Z' }];
+const filled = applyTelemetryToRvm(runningMachine, fullTelemetry);
+assert.equal(filled.status, 'FULL');
+assert.equal(filled.binFillPct, 100);
+assert.equal(filled.last_updated, '2026-10-25T12:00:00.000Z');
+
+// 4b. Out of service machine stays ERROR even with sensor telemetry
+const errorMachine = { ...liveBase, status: 'ERROR', rawStatus: 'ERROR' };
+const erroredWithTelemetry = applyTelemetryToRvm(errorMachine, fullTelemetry);
+assert.equal(erroredWithTelemetry.status, 'ERROR');
+assert.equal(erroredWithTelemetry.rawStatus, 'ERROR');
+
+// 4c. Machine with low fill (< 100%) becomes RUNNING
+const lowTelemetry = [{ compartment_type: 'CAN PET', threshold_level: 40, last_updated: '2026-10-25T13:00:00.000Z' }];
+const emptied = applyTelemetryToRvm(filled, lowTelemetry);
+assert.equal(emptied.status, 'RUNNING');
+assert.equal(emptied.binFillPct, 40);
 
 console.log('status merge checks passed');

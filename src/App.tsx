@@ -2,6 +2,7 @@ import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react'
 import { RVM, UserLocation } from './types/rvm';
 import { fetchAllRVMs, fetchRvmBinStatus, geocodePostalCode } from './services/api';
 import { calculateDistanceMeters, getMachineStatusInfo, getLatestTimestamp } from './utils/geo';
+import { applyTelemetryToRvm } from './utils/statusMerge.mts';
 import { SearchBox } from './components/SearchBox';
 import { NearestOperatingBin } from './components/NearestOperatingBin';
 import { MapView } from './components/MapView';
@@ -44,6 +45,22 @@ export const App: React.FC = () => {
   const binStatusAbortControllers = useRef<Map<number, AbortController>>(new Map());
   const lastFetchedTelemetryMs = useRef<Map<number, number>>(new Map());
   const activeTargetIdRef = useRef<number | null>(null);
+
+  // Sync refs for async callbacks & 2km radius scan
+  const rvmsRef = useRef<RVM[]>(rvms);
+  useEffect(() => {
+    rvmsRef.current = rvms;
+  }, [rvms]);
+
+  const userLocationRef = useRef<UserLocation>(userLocation);
+  useEffect(() => {
+    userLocationRef.current = userLocation;
+  }, [userLocation]);
+
+  const latestGpsCoordsRef = useRef<{ latitude: number; longitude: number; accuracy?: number } | null>(null);
+  const hasInitialGpsScannedRef = useRef(false);
+  const pendingScanCoordsRef = useRef<{ latitude: number; longitude: number } | null>(null);
+  const scanAbortControllerRef = useRef<AbortController | null>(null);
 
   // Monitor online status
   useEffect(() => {
@@ -97,48 +114,10 @@ export const App: React.FC = () => {
 
       lastFetchedTelemetryMs.current.set(targetId, Date.now());
 
-      const maxPct = Math.max(
-        ...binItems.map((b) => (typeof b.threshold_level === 'number' ? b.threshold_level : 0))
-      );
-
-      // Extract valid actual timestamps from bin status items
-      const validTimestamps = binItems
-        .map((b) => b.last_updated)
-        .filter((t): t is string => Boolean(t && !isNaN(new Date(t).getTime())));
-
-      // Sort descending to find newest real telemetry timestamp
-      validTimestamps.sort((a, b) => new Date(b).getTime() - new Date(a).getTime());
-      const freshestTime = validTimestamps[0] || null;
-
       setRvms((prev) =>
         prev.map((item) => {
           if (item.id !== targetId) return item;
-
-          const existingTimestamp =
-            item.last_updated ||
-            item.binStatusDetails?.find((b) => b.last_updated)?.last_updated;
-
-          // Live hardware sensor timestamp takes precedence; fallback to previous timestamp
-          const newestTime = freshestTime || existingTimestamp;
-
-          const isFull = maxPct >= 100;
-          const isErrorOrOffline = ['OFFLINE', 'CLEANING', 'SUSPENDED', 'MAINTENANCE', 'ERROR', 'UNKNOWN'].includes(
-            (item.rawStatus || item.status || '').toUpperCase()
-          );
-
-          // If sensor says >= 100%, it is FULL. If emptied (< 100%) and wasn't offline/error, it is RUNNING.
-          const nextStatus = isFull ? 'FULL' : isErrorOrOffline ? item.status : 'RUNNING';
-          const nextRawStatus = isFull ? 'FULL' : isErrorOrOffline ? item.rawStatus : 'RUNNING';
-
-          return {
-            ...item,
-            status: nextStatus,
-            rawStatus: nextRawStatus,
-            binStatusDetails: binItems,
-            binFillPct: maxPct,
-            last_updated: newestTime,
-            updated_at: newestTime,
-          };
+          return applyTelemetryToRvm(item, binItems);
         })
       );
     } catch (err: any) {
@@ -155,6 +134,137 @@ export const App: React.FC = () => {
       }
     }
   }, []);
+
+  // 2km Radius Scan: fetch live telemetry for all bins within 2km with concurrency & batch updates
+  const scanNearbyBins = useCallback(
+    async (
+      centerLat: number,
+      centerLng: number,
+      forceRefresh = false,
+      rvmPool?: RVM[]
+    ) => {
+      // 1. Cancel previous in-flight scan if any
+      if (scanAbortControllerRef.current) {
+        scanAbortControllerRef.current.abort();
+      }
+      const controller = new AbortController();
+      scanAbortControllerRef.current = controller;
+
+      const pool = rvmPool || rvmsRef.current;
+      if (!pool || pool.length === 0) return;
+
+      // 2. Find all bins within 2km (2000 meters) sorted closest-first
+      const nearby = pool
+        .map((r) => ({
+          ...r,
+          dist: calculateDistanceMeters(centerLat, centerLng, r.latitude, r.longitude),
+        }))
+        .filter((r) => r.dist <= 2000)
+        .sort((a, b) => a.dist - b.dist);
+
+      if (nearby.length === 0) return;
+
+      // 3. Filter out any that already have fresh telemetry (within 45s) unless forceRefresh
+      const toFetch = nearby.filter((b) => {
+        if (forceRefresh) return true;
+        const lastFetched = lastFetchedTelemetryMs.current.get(b.id);
+        return !lastFetched || Date.now() - lastFetched > 45000;
+      });
+
+      if (toFetch.length === 0) return;
+
+      // Track loading IDs in UI
+      setTelemetryLoadingIds((prev) => {
+        const next = new Set(prev);
+        toFetch.forEach((b) => next.add(b.id));
+        return next;
+      });
+
+      const CONCURRENCY = 6;
+      let currentIndex = 0;
+      let pendingBatchUpdates: { id: number; items: any[] }[] = [];
+      let batchTimeout: ReturnType<typeof setTimeout> | null = null;
+
+      const flushBatch = () => {
+        if (pendingBatchUpdates.length === 0) return;
+        const updates = [...pendingBatchUpdates];
+        pendingBatchUpdates = [];
+
+        setRvms((prev) => {
+          const updatesMap = new Map(updates.map((u) => [u.id, u.items]));
+          return prev.map((item) => {
+            const binItems = updatesMap.get(item.id);
+            if (!binItems) return item;
+            return applyTelemetryToRvm(item, binItems);
+          });
+        });
+
+        setTelemetryLoadingIds((prev) => {
+          const next = new Set(prev);
+          updates.forEach((u) => next.delete(u.id));
+          return next;
+        });
+      };
+
+      const worker = async () => {
+        while (currentIndex < toFetch.length) {
+          if (controller.signal.aborted) break;
+          const target = toFetch[currentIndex++];
+          if (!target) break;
+
+          try {
+            const items = await fetchRvmBinStatus(target.id, forceRefresh, controller.signal);
+            if (controller.signal.aborted) break;
+
+            lastFetchedTelemetryMs.current.set(target.id, Date.now());
+            if (items && items.length > 0) {
+              pendingBatchUpdates.push({ id: target.id, items });
+              if (pendingBatchUpdates.length >= 5) {
+                flushBatch();
+              } else if (!batchTimeout) {
+                batchTimeout = setTimeout(() => {
+                  batchTimeout = null;
+                  flushBatch();
+                }, 200);
+              }
+            } else {
+              setTelemetryLoadingIds((prev) => {
+                const next = new Set(prev);
+                next.delete(target.id);
+                return next;
+              });
+            }
+          } catch (err: any) {
+            if (err?.name !== 'AbortError') {
+              console.info(`Failed to query bin status for #${target.id}:`, err);
+            }
+            setTelemetryLoadingIds((prev) => {
+              const next = new Set(prev);
+              next.delete(target.id);
+              return next;
+            });
+          }
+        }
+      };
+
+      try {
+        const workers = Array.from(
+          { length: Math.min(CONCURRENCY, toFetch.length) },
+          () => worker()
+        );
+        await Promise.all(workers);
+      } finally {
+        if (batchTimeout) {
+          clearTimeout(batchTimeout);
+        }
+        flushBatch();
+        if (scanAbortControllerRef.current === controller) {
+          scanAbortControllerRef.current = null;
+        }
+      }
+    },
+    []
+  );
 
   const loadRvms = async (forceRefresh = false) => {
     if (forceRefresh) setIsRefreshing(true);
@@ -243,11 +353,20 @@ export const App: React.FC = () => {
 
       setLastUpdated(new Date());
 
+      // If initial GPS scan was waiting for RVMs to load, run it now!
+      if (pendingScanCoordsRef.current) {
+        const pending = pendingScanCoordsRef.current;
+        pendingScanCoordsRef.current = null;
+        scanNearbyBins(pending.latitude, pending.longitude, false, data);
+      }
+
       // If active target machine changed during fetchAllRVMs, refresh it now
       const latestTargetId = activeTargetIdRef.current || selectedRvmId;
       if (latestTargetId && latestTargetId !== targetId && forceRefresh) {
         enrichTargetRvm(latestTargetId, true);
       }
+
+      return data;
     } catch (err: any) {
       if (err?.name === 'AbortError') return;
       if (seq === loadRvmsSeqRef.current) {
@@ -285,6 +404,18 @@ export const App: React.FC = () => {
     manualLocationRef.current = false;
     if (!silent) setErrorMessage(null);
 
+    // If we already have known live GPS coordinates, apply them immediately
+    if (latestGpsCoordsRef.current) {
+      const { latitude, longitude, accuracy } = latestGpsCoordsRef.current;
+      setUserLocation({
+        latitude,
+        longitude,
+        label: 'Live Location',
+        isLiveGps: true,
+        accuracy,
+      });
+    }
+
     // Keep a single watch running; it survives until permission is denied
     if (geoWatchIdRef.current !== null) return;
 
@@ -292,8 +423,22 @@ export const App: React.FC = () => {
     geoWatchIdRef.current = navigator.geolocation.watchPosition(
       (position) => {
         setIsLoadingLocation(false);
-        if (manualLocationRef.current) return;
         const { latitude, longitude, accuracy } = position.coords;
+        latestGpsCoordsRef.current = { latitude, longitude, accuracy };
+
+        // 1. Initial GPS Ascertained: trigger 2km radius scan (one-shot on permission grant)
+        if (!hasInitialGpsScannedRef.current) {
+          hasInitialGpsScannedRef.current = true;
+          if (rvmsRef.current.length > 0) {
+            scanNearbyBins(latitude, longitude, false, rvmsRef.current);
+          } else {
+            pendingScanCoordsRef.current = { latitude, longitude };
+          }
+        }
+
+        // 2. If user is in manual postal search mode, do not overwrite custom location
+        if (manualLocationRef.current) return;
+
         setUserLocation((current) =>
           current.isLiveGps &&
           Math.abs(current.latitude - latitude) < 1e-6 &&
@@ -321,7 +466,7 @@ export const App: React.FC = () => {
         maximumAge: 5000,
       }
     );
-  }, []);
+  }, [scanNearbyBins]);
 
   // Stop the GPS watch when the app unmounts
   useEffect(() => {
@@ -345,7 +490,7 @@ export const App: React.FC = () => {
         return;
       }
 
-      // A chosen postal code wins over live GPS until the user asks for Live again
+      // A chosen postal code wins over live GPS until the user asks for Live/Recenter
       manualLocationRef.current = true;
       setUserLocation({
         latitude: result.latitude,
@@ -356,6 +501,9 @@ export const App: React.FC = () => {
         isLiveGps: false,
       });
       setSelectedRvmId(null);
+
+      // Trigger 2km radius scan around the confirmed searched location!
+      scanNearbyBins(result.latitude, result.longitude, false);
     } catch (err: any) {
       setErrorMessage(err.message || 'Error looking up postal code');
     } finally {
@@ -363,7 +511,41 @@ export const App: React.FC = () => {
     }
   };
 
-  // 4. Calculate Distance for All RVMs based on current user location
+  // 4. Recenter handler: return from custom search to live GPS follow mode
+  const handleRecenter = useCallback(() => {
+    manualLocationRef.current = false;
+    setErrorMessage(null);
+
+    if (latestGpsCoordsRef.current) {
+      const { latitude, longitude, accuracy } = latestGpsCoordsRef.current;
+      setUserLocation({
+        latitude,
+        longitude,
+        label: 'Live Location',
+        isLiveGps: true,
+        accuracy,
+      });
+      setSelectedRvmId(null);
+    } else {
+      requestLiveLocation(false);
+    }
+  }, [requestLiveLocation]);
+
+  // 5. Top Bar Manual Refresh: re-sync fleet and perform 2km radius scan around current location
+  const handleManualRefresh = async () => {
+    setIsRefreshing(true);
+    try {
+      const freshFleet = await loadRvms(true);
+      const loc = userLocationRef.current;
+      if (loc) {
+        await scanNearbyBins(loc.latitude, loc.longitude, true, freshFleet);
+      }
+    } finally {
+      setIsRefreshing(false);
+    }
+  };
+
+  // 6. Calculate Distance for All RVMs based on current user location
   const rvmsWithDistance = useMemo(() => {
     if (!userLocation) return rvms;
 
@@ -412,15 +594,6 @@ export const App: React.FC = () => {
     if (!activeTargetRVM?.id) return;
     enrichTargetRvm(activeTargetRVM.id, false);
   }, [activeTargetRVM?.id, enrichTargetRvm]);
-
-  // Proactively fetch live telemetry for the closest 3 machines so full bins never masquerade as available
-  useEffect(() => {
-    if (!rvmsWithDistance || rvmsWithDistance.length === 0) return;
-    const candidates = rvmsWithDistance.slice(0, 3);
-    for (const c of candidates) {
-      enrichTargetRvm(c.id, false);
-    }
-  }, [rvmsWithDistance, enrichTargetRvm]);
 
   // When modal machine opens, ensure fresh telemetry is fetched
   useEffect(() => {
@@ -484,7 +657,7 @@ export const App: React.FC = () => {
           {/* Refresh Button */}
           <button
             type="button"
-            onClick={() => loadRvms(true)}
+            onClick={handleManualRefresh}
             disabled={isRefreshing || isLoadingRvms}
             title={
               lastUpdated
@@ -506,7 +679,7 @@ export const App: React.FC = () => {
           <SearchBox
             userLocation={userLocation}
             onSearchPostal={handleSearchPostal}
-            onGetLiveLocation={() => requestLiveLocation(false)}
+            onGetLiveLocation={handleRecenter}
             isLoadingLocation={isLoadingLocation}
             isLoadingPostal={isLoadingPostal}
             errorMessage={errorMessage}
@@ -561,6 +734,7 @@ export const App: React.FC = () => {
               focusedRVM={focusedRVM}
               onClearFocus={() => setFocusedRVM(null)}
               targetRVM={activeTargetRVM}
+              onRecenter={handleRecenter}
             />
           </div>
 
