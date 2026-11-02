@@ -1,6 +1,7 @@
 /**
- * Cloudflare Worker: BCRS Real-Time Serverless Edge Proxy
- * Fetches live RVM data & bin telemetry directly from bts.bcrs.sg with CORS enabled.
+ * Cloudflare Worker: BCRS Real-Time Serverless Edge Proxy & OneMap Pedestrian Router
+ * - Fetches live RVM data & bin telemetry directly from bts.bcrs.sg with CORS enabled.
+ * - Proxies SLA OneMap pedestrian walking route API with automated 72-hour token renewal.
  */
 
 const HEADERS = {
@@ -18,6 +19,7 @@ const CORS_HEADERS = {
 
 let cachedAuth = null;
 
+// ======================== BCRS Auth Cache ========================
 async function getAuth(forceFresh = false) {
   const now = Date.now();
   if (!forceFresh && cachedAuth && now < cachedAuth.expiresAt) {
@@ -68,8 +70,87 @@ async function fetchFromUpstream(pathBuilder, forceFresh = false) {
   return await res.json();
 }
 
+// ===================== OneMap Automated Token Cache =====================
+let cachedOnemapToken = null;
+
+async function getOnemapToken(env, forceFresh = false) {
+  const now = Date.now();
+  if (!forceFresh && cachedOnemapToken && now < cachedOnemapToken.expiresAt) {
+    return cachedOnemapToken.token;
+  }
+
+  // Check for static token override first (if user sets ONEMAP_STATIC_TOKEN)
+  if (env?.ONEMAP_STATIC_TOKEN && !env?.ONEMAP_EMAIL) {
+    return env.ONEMAP_STATIC_TOKEN;
+  }
+
+  const email = env?.ONEMAP_EMAIL;
+  const password = env?.ONEMAP_PASSWORD;
+
+  if (!email || !password) {
+    if (env?.ONEMAP_TOKEN) return env.ONEMAP_TOKEN;
+    throw new Error('OneMap credentials missing. Please set ONEMAP_EMAIL and ONEMAP_PASSWORD secrets in Cloudflare Worker.');
+  }
+
+  const res = await fetch('https://www.onemap.gov.sg/api/auth/post/getToken', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ email, password }),
+  });
+
+  if (!res.ok) {
+    const errText = await res.text();
+    throw new Error(`OneMap token request failed (HTTP ${res.status}): ${errText}`);
+  }
+
+  const data = await res.json();
+  const token = data?.access_token;
+  if (!token) {
+    throw new Error(`No access_token returned by OneMap: ${JSON.stringify(data)}`);
+  }
+
+  // OneMap tokens are valid for 72 hours (3 days).
+  // Cache for 70 hours (renew 2 hours safely ahead of expiry).
+  cachedOnemapToken = {
+    token,
+    expiresAt: now + 70 * 60 * 60 * 1000,
+  };
+
+  return token;
+}
+
+async function fetchOnemapRoute(start, end, routeType = 'walk', env) {
+  let token = await getOnemapToken(env);
+
+  const callApi = async (tok) => {
+    const url = `https://www.onemap.gov.sg/api/public/routingsvc/route?start=${encodeURIComponent(start)}&end=${encodeURIComponent(end)}&routeType=${encodeURIComponent(routeType)}`;
+    return await fetch(url, {
+      headers: {
+        'Accept': 'application/json',
+        'Authorization': tok,
+      },
+    });
+  };
+
+  let res = await callApi(token);
+
+  // If token was rejected upstream (HTTP 401/403), invalidate cache and retry once
+  if (res.status === 401 || res.status === 403) {
+    cachedOnemapToken = null;
+    token = await getOnemapToken(env, true);
+    res = await callApi(token);
+  }
+
+  if (!res.ok) {
+    const errBody = await res.text();
+    throw new Error(`OneMap Routing API error (HTTP ${res.status}): ${errBody}`);
+  }
+
+  return await res.json();
+}
+
 export default {
-  async fetch(request) {
+  async fetch(request, env = {}, ctx) {
     if (request.method === 'OPTIONS') {
       return new Response(null, { headers: CORS_HEADERS });
     }
@@ -79,6 +160,35 @@ export default {
     const forceRefresh = url.searchParams.get('refresh') === 'true';
 
     try {
+      // Route 0: OneMap Pedestrian Route Proxy (/api/route or /route)
+      const isRouteRoute = pathname === '/api/route' || pathname === '/route';
+      if (isRouteRoute) {
+        const start = url.searchParams.get('start');
+        const end = url.searchParams.get('end');
+        const routeType = url.searchParams.get('routeType') || 'walk';
+
+        if (!start || !end) {
+          return new Response(JSON.stringify({
+            status: 'error',
+            message: 'Missing "start" or "end" query parameters. Format: start=lat,lng&end=lat,lng'
+          }), {
+            status: 400,
+            headers: { 'Content-Type': 'application/json', ...CORS_HEADERS }
+          });
+        }
+
+        const routeData = await fetchOnemapRoute(start, end, routeType, env);
+
+        return new Response(JSON.stringify(routeData), {
+          headers: {
+            'Content-Type': 'application/json',
+            ...CORS_HEADERS,
+            // Cache valid route geometries for 1 hour to reduce upstream OneMap quota consumption
+            'Cache-Control': 'public, max-age=3600, s-maxage=3600',
+          }
+        });
+      }
+
       // Route 1: Specific RVM bin-status (/api/rvms/:id/bin-status or ?rvmId=:id or ?id=:id)
       const rvmIdMatch = pathname.match(/\/api\/rvms\/(\d+)\/bin-status/);
       const isBinStatusRoute = Boolean(rvmIdMatch || pathname.includes('bin-status') || url.searchParams.has('rvmId'));
