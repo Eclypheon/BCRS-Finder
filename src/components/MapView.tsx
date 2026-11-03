@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState, useCallback } from 'react';
 import L from 'leaflet';
 import { RVM, UserLocation, FilterOption } from '../types/rvm';
-import { getMachineStatusInfo, formatDistance } from '../utils/geo';
+import { getMachineStatusInfo } from '../utils/geo';
 import { fetchRoute, RouteResult, TravelMode } from '../services/routing';
 import { Compass, Locate, Layers, Footprints, Car } from 'lucide-react';
 
@@ -692,26 +692,11 @@ export const MapView: React.FC<MapViewProps> = ({
 
       {/* Floating Active Route HUD Pill */}
       {targetRVM && activeRoute && (
-        <div className="absolute bottom-2.5 left-2 sm:left-1/2 sm:-translate-x-1/2 z-[500] pointer-events-auto">
-          <div className="flex items-center gap-2 px-3 py-1.5 rounded-xl bg-slate-900/95 backdrop-blur-md border border-slate-800/90 shadow-2xl text-xs text-slate-200">
-            <div className="flex items-center gap-1 font-bold text-emerald-400">
-              {activeRoute.mode === 'driving' ? (
-                <Car className="w-3.5 h-3.5 text-blue-400 shrink-0" />
-              ) : (
-                <Footprints className="w-3.5 h-3.5 text-sky-400 shrink-0" />
-              )}
-              <span>{formatDistance(activeRoute.distanceMeters)}</span>
-            </div>
-            <span className="text-slate-600">•</span>
-            <span className="text-slate-300 font-medium">
-              ~{Math.max(1, Math.round(activeRoute.durationSeconds / 60))} min
-            </span>
-            <span className="text-[10px] px-1.5 py-0.5 rounded bg-slate-800 text-slate-400 border border-slate-700/60 font-mono">
-              {activeRoute.provider === 'onemap'
-                ? 'OneMap SLA'
-                : activeRoute.provider === 'osrm'
-                ? 'OSRM'
-                : 'Direct'}
+        <div className="absolute bottom-2.5 left-1/2 -translate-x-1/2 z-[500] pointer-events-auto whitespace-nowrap">
+          <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-xl bg-slate-900/95 backdrop-blur-md border border-slate-800/90 shadow-2xl text-[11px] text-slate-300">
+            <span className="text-slate-400 font-medium">Route API:</span>
+            <span className="font-semibold text-emerald-400">
+              {activeRoute.provider === 'onemap' ? 'OneMap SLA' : 'OSRM'}
             </span>
           </div>
         </div>
