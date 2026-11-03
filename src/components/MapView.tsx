@@ -76,10 +76,20 @@ export const MapView: React.FC<MapViewProps> = ({
   const [isHeadingUp, setIsHeadingUp] = useState<boolean>(false);
   const [isFollowingUser, setIsFollowingUser] = useState<boolean>(true);
   const isFollowingUserRef = useRef<boolean>(true);
+  const isHeadingUpRef = useRef<boolean>(false);
+  const deviceHeadingRef = useRef<number | null>(null);
 
   useEffect(() => {
     isFollowingUserRef.current = isFollowingUser;
   }, [isFollowingUser]);
+
+  useEffect(() => {
+    isHeadingUpRef.current = isHeadingUp;
+  }, [isHeadingUp]);
+
+  useEffect(() => {
+    deviceHeadingRef.current = deviceHeading;
+  }, [deviceHeading]);
 
   const DEFAULT_ZOOM = 16; // 3 zooms out from OSM maxZoom 19
 
@@ -247,6 +257,39 @@ export const MapView: React.FC<MapViewProps> = ({
     map.on('dragstart', () => {
       setIsFollowingUser(false);
     });
+
+    // In Heading Up mode, compensate for CSS rotation so dragging follows finger direction
+    const draggable = (map.dragging as any)?._draggable;
+    if (draggable) {
+      draggable.on('predrag', (e: any) => {
+        if (!isHeadingUpRef.current || deviceHeadingRef.current === null) return;
+
+        const origEv = e?.originalEvent || draggable._lastEvent;
+        if (!origEv || !draggable._startPoint || !draggable._startPos) return;
+
+        const first =
+          origEv.touches && origEv.touches.length === 1 ? origEv.touches[0] : origEv;
+        if (typeof first.clientX !== 'number' || typeof first.clientY !== 'number') return;
+
+        const screenDx = first.clientX - draggable._startPoint.x;
+        const screenDy = first.clientY - draggable._startPoint.y;
+
+        // Container is rotated by CSS `rotate(-deviceHeading deg) scale(1.42)`
+        // To make the map move under the finger, rotate displacement by +deviceHeading / 1.42
+        const headingRad = (deviceHeadingRef.current * Math.PI) / 180;
+        const cosH = Math.cos(headingRad);
+        const sinH = Math.sin(headingRad);
+        const scale = 1.42;
+
+        const localDx = (screenDx * cosH - screenDy * sinH) / scale;
+        const localDy = (screenDx * sinH + screenDy * cosH) / scale;
+
+        draggable._newPos = draggable._startPos.add(L.point(localDx, localDy));
+        if (draggable._absPos) {
+          draggable._absPos = draggable._newPos.clone();
+        }
+      });
+    }
 
     mapInstanceRef.current = map;
 
@@ -640,7 +683,7 @@ export const MapView: React.FC<MapViewProps> = ({
           style={
             recenterTop !== null
               ? { top: `${recenterTop}px` }
-              : { bottom: '0.75rem' }
+              : { bottom: '25px' }
           }
         >
           {/* Recenter Button */}
@@ -692,7 +735,7 @@ export const MapView: React.FC<MapViewProps> = ({
 
       {/* Floating Active Route HUD Pill - horizontally in line with North Up button */}
       {targetRVM && activeRoute && (
-        <div className="absolute bottom-3 left-1/2 -translate-x-1/2 z-[500] pointer-events-auto whitespace-nowrap">
+        <div className="absolute bottom-[25px] left-1/2 -translate-x-1/2 z-[500] pointer-events-auto whitespace-nowrap">
           <div className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl bg-slate-900/95 backdrop-blur-md border border-slate-800/90 shadow-2xl text-[11px] text-slate-300">
             <span className="text-slate-400 font-medium">Route API:</span>
             <span className="font-semibold text-emerald-400">
