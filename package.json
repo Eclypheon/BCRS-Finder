@@ -10,7 +10,8 @@
     "preview": "vite preview",
     "start": "NODE_ENV=production node server/index.js",
     "fetch-seed": "node scripts/fetch-seed.js",
-    "check": "node scripts/check-status-merge.mjs"
+    "check": "node scripts/check-status-merge.mjs",
+    "deploy:worker": "wrangler deploy"
   },
   "keywords": [],
   "author": "",
