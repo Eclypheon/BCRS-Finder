@@ -71,6 +71,8 @@ export const MapView: React.FC<MapViewProps> = ({
   const [activeFilter, setActiveFilter] = useState<FilterOption>('ALL');
   const [mapStyle, setMapStyle] = useState<'osm' | 'onemap' | 'dark'>('osm');
   const [recenterTop, setRecenterTop] = useState<number | null>(null);
+  const [compassTop, setCompassTop] = useState<number | null>(null);
+  const compassBtnRef = useRef<HTMLButtonElement>(null);
   const [activeRoute, setActiveRoute] = useState<RouteResult | null>(null);
   const [deviceHeading, setDeviceHeading] = useState<number | null>(null);
   const [isHeadingUp, setIsHeadingUp] = useState<boolean>(false);
@@ -84,6 +86,7 @@ export const MapView: React.FC<MapViewProps> = ({
   const DEFAULT_ZOOM = 16; // 3 zooms out from OSM maxZoom 19
 
   // Dynamically align the top of the Recenter button to the top of Leaflet's zoom-in (+) button
+  // and align the Route API pill to the North Up button
   const updateRecenterPosition = useCallback(() => {
     if (!mapContainerRef.current) return;
     const zoomInBtn = mapContainerRef.current.querySelector('.leaflet-control-zoom-in');
@@ -95,7 +98,27 @@ export const MapView: React.FC<MapViewProps> = ({
         setRecenterTop(Math.round(topOffset));
       }
     }
+    if (compassBtnRef.current && mapContainerRef.current) {
+      const mapRect = mapContainerRef.current.getBoundingClientRect();
+      const compassRect = compassBtnRef.current.getBoundingClientRect();
+      const cTop = compassRect.top - mapRect.top;
+      if (cTop > 0) {
+        setCompassTop(Math.round(cTop));
+      }
+    }
   }, []);
+
+  // Update compassTop when recenterTop updates
+  useEffect(() => {
+    if (compassBtnRef.current && mapContainerRef.current) {
+      const mapRect = mapContainerRef.current.getBoundingClientRect();
+      const compassRect = compassBtnRef.current.getBoundingClientRect();
+      const cTop = compassRect.top - mapRect.top;
+      if (cTop > 0) {
+        setCompassTop(Math.round(cTop));
+      }
+    }
+  }, [recenterTop]);
 
   // Listen to device orientation / compass sensor, and point the arrow where the user faces
   // (prefers the absolute, true-north reading so the heading is never offset by the start position)
@@ -668,6 +691,7 @@ export const MapView: React.FC<MapViewProps> = ({
 
           {/* Compass Button below Recenter */}
           <button
+            ref={compassBtnRef}
             type="button"
             onClick={toggleCompassMode}
             title={isHeadingUp ? 'Orient North' : 'Orient to Facing Direction'}
@@ -690,10 +714,19 @@ export const MapView: React.FC<MapViewProps> = ({
         </div>
       )}
 
-      {/* Floating Active Route HUD Pill */}
+      {/* Floating Active Route HUD Pill - aligned horizontally in line with North Up button */}
       {targetRVM && activeRoute && (
-        <div className="absolute bottom-2.5 left-1/2 -translate-x-1/2 z-[500] pointer-events-auto whitespace-nowrap">
-          <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-xl bg-slate-900/95 backdrop-blur-md border border-slate-800/90 shadow-2xl text-[11px] text-slate-300">
+        <div
+          className="absolute left-1/2 -translate-x-1/2 z-[500] pointer-events-auto whitespace-nowrap transition-all duration-150"
+          style={
+            compassTop !== null
+              ? { top: `${compassTop}px` }
+              : recenterTop !== null
+              ? { top: `${recenterTop + 38}px` }
+              : { bottom: '2.5rem' }
+          }
+        >
+          <div className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl bg-slate-900/95 backdrop-blur-md border border-slate-800/90 shadow-2xl text-[11px] text-slate-300">
             <span className="text-slate-400 font-medium">Route API:</span>
             <span className="font-semibold text-emerald-400">
               {activeRoute.provider === 'onemap' ? 'OneMap SLA' : 'OSRM'}
