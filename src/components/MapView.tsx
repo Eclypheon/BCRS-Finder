@@ -1,9 +1,9 @@
 import React, { useEffect, useRef, useState, useCallback } from 'react';
 import L from 'leaflet';
 import { RVM, UserLocation, FilterOption } from '../types/rvm';
-import { getMachineStatusInfo } from '../utils/geo';
-import { fetchWalkingRoute, WalkingRouteResult } from '../services/routing';
-import { Compass, Locate, Layers } from 'lucide-react';
+import { getMachineStatusInfo, formatDistance } from '../utils/geo';
+import { fetchRoute, RouteResult, TravelMode } from '../services/routing';
+import { Compass, Locate, Layers, Footprints, Car } from 'lucide-react';
 
 interface MapViewProps {
   userLocation: UserLocation | null;
@@ -13,6 +13,8 @@ interface MapViewProps {
   onClearFocus: () => void;
   targetRVM?: RVM | null;
   onRecenter?: () => void;
+  travelMode?: TravelMode;
+  onTravelModeChange?: (mode: TravelMode) => void;
 }
 
 interface TileLayerConfig {
@@ -55,6 +57,8 @@ export const MapView: React.FC<MapViewProps> = ({
   onClearFocus,
   targetRVM,
   onRecenter,
+  travelMode = 'walking',
+  onTravelModeChange,
 }) => {
   const mapContainerRef = useRef<HTMLDivElement>(null);
   const mapInstanceRef = useRef<L.Map | null>(null);
@@ -67,7 +71,7 @@ export const MapView: React.FC<MapViewProps> = ({
   const [activeFilter, setActiveFilter] = useState<FilterOption>('ALL');
   const [mapStyle, setMapStyle] = useState<'osm' | 'onemap' | 'dark'>('osm');
   const [recenterTop, setRecenterTop] = useState<number | null>(null);
-  const [walkingRoute, setWalkingRoute] = useState<WalkingRouteResult | null>(null);
+  const [activeRoute, setActiveRoute] = useState<RouteResult | null>(null);
   const [deviceHeading, setDeviceHeading] = useState<number | null>(null);
   const [isHeadingUp, setIsHeadingUp] = useState<boolean>(false);
   const [isFollowingUser, setIsFollowingUser] = useState<boolean>(true);
@@ -162,29 +166,37 @@ export const MapView: React.FC<MapViewProps> = ({
     return stopListening;
   }, []);
 
-  // Fetch walking path using OpenStreetMap OSRM routing
+  // Fetch route: Default Walking (OneMap primary, OSRM fallback) or Driving (OSRM driving)
   useEffect(() => {
     if (!userLocation || !targetRVM) {
-      setWalkingRoute(null);
+      setActiveRoute(null);
       return;
     }
 
     let active = true;
-    fetchWalkingRoute(
+    const mode = travelMode || 'walking';
+    fetchRoute(
       userLocation.latitude,
       userLocation.longitude,
       targetRVM.latitude,
-      targetRVM.longitude
+      targetRVM.longitude,
+      mode
     ).then((result) => {
       if (active) {
-        setWalkingRoute(result);
+        setActiveRoute(result);
       }
     });
 
     return () => {
       active = false;
     };
-  }, [userLocation?.latitude, userLocation?.longitude, targetRVM?.latitude, targetRVM?.longitude]);
+  }, [
+    userLocation?.latitude,
+    userLocation?.longitude,
+    targetRVM?.latitude,
+    targetRVM?.longitude,
+    travelMode,
+  ]);
 
   // Initialize Map
   useEffect(() => {
@@ -220,7 +232,7 @@ export const MapView: React.FC<MapViewProps> = ({
       routePane.style.zIndex = '350';
     }
 
-    // Dedicated layer group for dotted walking path
+    // Dedicated layer group for route path
     const routeGroup = L.layerGroup().addTo(map);
     routeLayerRef.current = routeGroup;
 
@@ -249,7 +261,7 @@ export const MapView: React.FC<MapViewProps> = ({
     };
   }, [updateRecenterPosition]);
 
-  // Draw walking path as blue dotted polyline on the map
+  // Draw path on the map: dotted cyan for walking, solid blue for driving
   useEffect(() => {
     const map = mapInstanceRef.current;
     const routeGroup = routeLayerRef.current;
@@ -257,26 +269,28 @@ export const MapView: React.FC<MapViewProps> = ({
 
     routeGroup.clearLayers();
 
-    if (walkingRoute && walkingRoute.coordinates.length > 0) {
+    if (activeRoute && activeRoute.coordinates.length > 0) {
+      const isDrive = activeRoute.mode === 'driving';
+
       // Dark outline underneath for crisp contrast on any map tiles
-      const outline = L.polyline(walkingRoute.coordinates, {
+      const outline = L.polyline(activeRoute.coordinates, {
         pane: 'routePane',
         interactive: false,
         color: '#020617',
-        weight: 6.5,
-        dashArray: '3, 8',
+        weight: isDrive ? 7 : 6.5,
+        dashArray: isDrive ? undefined : '3, 8',
         lineCap: 'round',
         lineJoin: 'round',
-        opacity: 0.65,
+        opacity: 0.7,
       });
 
-      // Bright blue dotted line for walking path
-      const line = L.polyline(walkingRoute.coordinates, {
+      // Bright polyline: solid deep blue for driving, dotted cyan for walking
+      const line = L.polyline(activeRoute.coordinates, {
         pane: 'routePane',
         interactive: false,
-        color: '#38bdf8',
-        weight: 4.5,
-        dashArray: '3, 8',
+        color: isDrive ? '#3b82f6' : '#38bdf8',
+        weight: isDrive ? 5 : 4.5,
+        dashArray: isDrive ? undefined : '3, 8',
         lineCap: 'round',
         lineJoin: 'round',
         opacity: 0.95,
@@ -285,7 +299,7 @@ export const MapView: React.FC<MapViewProps> = ({
       outline.addTo(routeGroup);
       line.addTo(routeGroup);
     }
-  }, [walkingRoute]);
+  }, [activeRoute]);
 
   // ResizeObserver to ensure Leaflet map adjusts to container height dynamically
   useEffect(() => {
@@ -570,19 +584,52 @@ export const MapView: React.FC<MapViewProps> = ({
           </button>
         </div>
 
-        {/* Map Layer Switcher - comfortably inside the safe margin on the right */}
-        <div className="p-0.5 sm:p-1 bg-slate-900/95 backdrop-blur-md border border-slate-800/90 rounded-xl shadow-lg pointer-events-auto shrink-0">
-          <button
-            type="button"
-            onClick={() =>
-              setMapStyle((s) => (s === 'osm' ? 'onemap' : s === 'onemap' ? 'dark' : 'osm'))
-            }
-            title={`Switch Basemap: currently ${TILE_CONFIGS[mapStyle].name}`}
-            className="inline-flex items-center gap-1 px-2 py-1 rounded-lg text-[11px] font-semibold text-slate-300 hover:text-white hover:bg-slate-800 transition-colors cursor-pointer"
-          >
-            <Layers className="w-3.5 h-3.5 text-emerald-400" />
-            <span className="hidden xs:inline">{TILE_CONFIGS[mapStyle].name}</span>
-          </button>
+        {/* Right side controls: Mode Toggle & Layer Switcher */}
+        <div className="flex items-center gap-1.5 pointer-events-auto shrink-0">
+          {/* Travel Mode Toggle (Walk / Drive) */}
+          <div className="flex items-center p-0.5 bg-slate-900/95 backdrop-blur-md border border-slate-800/90 rounded-xl shadow-lg">
+            <button
+              type="button"
+              onClick={() => onTravelModeChange?.('walking')}
+              title="Walking route (OneMap SLA)"
+              className={`inline-flex items-center gap-1 px-2 py-1 rounded-lg text-[11px] font-bold transition-all cursor-pointer ${
+                travelMode === 'walking'
+                  ? 'bg-sky-500 text-white shadow'
+                  : 'text-slate-400 hover:text-slate-200'
+              }`}
+            >
+              <Footprints className="w-3.5 h-3.5" />
+              <span className="hidden xs:inline">Walk</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => onTravelModeChange?.('driving')}
+              title="Driving route (OSRM Driving)"
+              className={`inline-flex items-center gap-1 px-2 py-1 rounded-lg text-[11px] font-bold transition-all cursor-pointer ${
+                travelMode === 'driving'
+                  ? 'bg-blue-600 text-white shadow'
+                  : 'text-slate-400 hover:text-slate-200'
+              }`}
+            >
+              <Car className="w-3.5 h-3.5" />
+              <span className="hidden xs:inline">Drive</span>
+            </button>
+          </div>
+
+          {/* Map Layer Switcher */}
+          <div className="p-0.5 sm:p-1 bg-slate-900/95 backdrop-blur-md border border-slate-800/90 rounded-xl shadow-lg">
+            <button
+              type="button"
+              onClick={() =>
+                setMapStyle((s) => (s === 'osm' ? 'onemap' : s === 'onemap' ? 'dark' : 'osm'))
+              }
+              title={`Switch Basemap: currently ${TILE_CONFIGS[mapStyle].name}`}
+              className="inline-flex items-center gap-1 px-2 py-1 rounded-lg text-[11px] font-semibold text-slate-300 hover:text-white hover:bg-slate-800 transition-colors cursor-pointer"
+            >
+              <Layers className="w-3.5 h-3.5 text-emerald-400" />
+              <span className="hidden xs:inline">{TILE_CONFIGS[mapStyle].name}</span>
+            </button>
+          </div>
         </div>
       </div>
 
@@ -640,6 +687,33 @@ export const MapView: React.FC<MapViewProps> = ({
             />
             <span>{isHeadingUp ? 'Heading Up' : 'North Up'}</span>
           </button>
+        </div>
+      )}
+
+      {/* Floating Active Route HUD Pill */}
+      {targetRVM && activeRoute && (
+        <div className="absolute bottom-2.5 left-2 sm:left-1/2 sm:-translate-x-1/2 z-[500] pointer-events-auto">
+          <div className="flex items-center gap-2 px-3 py-1.5 rounded-xl bg-slate-900/95 backdrop-blur-md border border-slate-800/90 shadow-2xl text-xs text-slate-200">
+            <div className="flex items-center gap-1 font-bold text-emerald-400">
+              {activeRoute.mode === 'driving' ? (
+                <Car className="w-3.5 h-3.5 text-blue-400 shrink-0" />
+              ) : (
+                <Footprints className="w-3.5 h-3.5 text-sky-400 shrink-0" />
+              )}
+              <span>{formatDistance(activeRoute.distanceMeters)}</span>
+            </div>
+            <span className="text-slate-600">•</span>
+            <span className="text-slate-300 font-medium">
+              ~{Math.max(1, Math.round(activeRoute.durationSeconds / 60))} min
+            </span>
+            <span className="text-[10px] px-1.5 py-0.5 rounded bg-slate-800 text-slate-400 border border-slate-700/60 font-mono">
+              {activeRoute.provider === 'onemap'
+                ? 'OneMap SLA'
+                : activeRoute.provider === 'osrm'
+                ? 'OSRM'
+                : 'Direct'}
+            </span>
+          </div>
         </div>
       )}
 

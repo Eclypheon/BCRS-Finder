@@ -2,6 +2,7 @@ import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react'
 import { RVM, UserLocation } from './types/rvm';
 import { fetchAllRVMs, fetchRvmBinStatus, geocodePostalCode } from './services/api';
 import { calculateDistanceMeters, getMachineStatusInfo, getLatestTimestamp } from './utils/geo';
+import { TravelMode } from './services/routing';
 import { applyTelemetryToRvm } from './utils/statusMerge.mts';
 import { SearchBox } from './components/SearchBox';
 import { NearestOperatingBin } from './components/NearestOperatingBin';
@@ -31,6 +32,7 @@ export const App: React.FC = () => {
   const [selectedRvmId, setSelectedRvmId] = useState<number | null>(null);
   const [modalRVM, setModalRVM] = useState<RVM | null>(null);
   const [focusedRVM, setFocusedRVM] = useState<RVM | null>(null);
+  const [travelMode, setTravelMode] = useState<TravelMode>('walking');
   const [isOnline, setIsOnline] = useState(navigator.onLine);
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
   const [telemetryLoadingIds, setTelemetryLoadingIds] = useState<Set<number>>(new Set());
@@ -690,6 +692,8 @@ export const App: React.FC = () => {
           <NearestOperatingBin
             rvm={activeTargetRVM}
             userLocation={userLocation}
+            travelMode={travelMode}
+            onTravelModeChange={setTravelMode}
             onFocusOnMap={(rvm) => {
               setFocusedRVM(rvm);
               activeTargetIdRef.current = rvm.id;
@@ -719,6 +723,8 @@ export const App: React.FC = () => {
             <MapView
               userLocation={userLocation}
               rvms={rvmsWithDistance}
+              travelMode={travelMode}
+              onTravelModeChange={setTravelMode}
               onSelectRVM={(rvm) => {
                 const currentTargetId = activeTargetRVM?.id;
                 if (currentTargetId === rvm.id) {
@@ -750,6 +756,8 @@ export const App: React.FC = () => {
       <NavigationModal
         rvm={modalRVM ? rvmsWithDistance.find((r) => r.id === modalRVM.id) || modalRVM : null}
         userLocation={userLocation}
+        travelMode={travelMode}
+        onTravelModeChange={setTravelMode}
         onClose={() => setModalRVM(null)}
       />
 

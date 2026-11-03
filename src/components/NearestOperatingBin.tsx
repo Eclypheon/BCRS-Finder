@@ -3,16 +3,20 @@ import { RVM, UserLocation } from '../types/rvm';
 import {
   formatDistance,
   estimateWalkMinutes,
+  estimateDriveMinutes,
   getNavigationLinks,
   launchNavigation,
   formatSingaporeDateTime,
   getMachineStatusInfo,
 } from '../utils/geo';
-import { Footprints, MapPin, Compass, Clock } from 'lucide-react';
+import { TravelMode } from '../services/routing';
+import { Footprints, MapPin, Compass, Clock, Car } from 'lucide-react';
 
 interface NearestOperatingBinProps {
   rvm: RVM | null;
   userLocation: UserLocation | null;
+  travelMode?: TravelMode;
+  onTravelModeChange?: (mode: TravelMode) => void;
   onFocusOnMap: (rvm: RVM) => void;
   isCustomSelected?: boolean;
   onResetToNearest?: () => void;
@@ -22,6 +26,8 @@ interface NearestOperatingBinProps {
 export const NearestOperatingBin: React.FC<NearestOperatingBinProps> = ({
   rvm,
   userLocation,
+  travelMode = 'walking',
+  onTravelModeChange,
   onFocusOnMap,
   isCustomSelected = false,
   onResetToNearest,
@@ -35,6 +41,7 @@ export const NearestOperatingBin: React.FC<NearestOperatingBinProps> = ({
     );
   }
 
+  const isDrive = travelMode === 'driving';
   const statusInfo = getMachineStatusInfo(rvm);
   const fillPct =
     typeof rvm.binFillPct === 'number'
@@ -44,7 +51,9 @@ export const NearestOperatingBin: React.FC<NearestOperatingBinProps> = ({
       : null;
 
   const distanceStr = formatDistance(rvm.distanceMeters);
-  const walkMinutes = estimateWalkMinutes(rvm.distanceMeters);
+  const timeMinutes = isDrive
+    ? estimateDriveMinutes(rvm.distanceMeters)
+    : estimateWalkMinutes(rvm.distanceMeters);
   
   // Authenticated real telemetry timestamp pulled directly from BCRS machine sensor API
   const rawUpdatedAt =
@@ -58,7 +67,8 @@ export const NearestOperatingBin: React.FC<NearestOperatingBinProps> = ({
     rvm.longitude,
     rvm.address || rvm.locationName,
     userLocation?.latitude,
-    userLocation?.longitude
+    userLocation?.longitude,
+    travelMode
   );
 
   return (
@@ -148,10 +158,24 @@ export const NearestOperatingBin: React.FC<NearestOperatingBinProps> = ({
 
             <span className="text-slate-600">•</span>
 
-            <span className="flex items-center gap-1 text-slate-300 font-medium">
-              <Footprints className="w-3.5 h-3.5 text-slate-400 shrink-0" />
-              ~{walkMinutes} mins walk
-            </span>
+            <button
+              type="button"
+              onClick={() => onTravelModeChange?.(isDrive ? 'walking' : 'driving')}
+              title={`Switch to ${isDrive ? 'Walking' : 'Driving'} mode`}
+              className="inline-flex items-center gap-1 text-slate-300 hover:text-white font-medium cursor-pointer transition-colors"
+            >
+              {isDrive ? (
+                <>
+                  <Car className="w-3.5 h-3.5 text-blue-400 shrink-0" />
+                  <span>~{timeMinutes} mins drive</span>
+                </>
+              ) : (
+                <>
+                  <Footprints className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+                  <span>~{timeMinutes} mins walk</span>
+                </>
+              )}
+            </button>
 
             {rvm.postalCode && (
               <>

@@ -37,6 +37,12 @@ export function estimateWalkMinutes(meters?: number): number {
   return Math.max(1, Math.round(meters / 80));
 }
 
+// Estimate driving time in city conditions (approx 35 km/h ~ 580 m/min)
+export function estimateDriveMinutes(meters?: number): number {
+  if (!meters || meters <= 0) return 1;
+  return Math.max(1, Math.round(meters / 580));
+}
+
 // Calculate initial bearing in degrees (0 = North, 90 = East, 180 = South, 270 = West)
 export function calculateBearingDegrees(
   lat1: number,
@@ -138,20 +144,27 @@ export function getNavigationLinks(
   targetLng: number,
   targetAddress?: string,
   userLat?: number,
-  userLng?: number
+  userLng?: number,
+  travelMode: 'walking' | 'driving' = 'walking'
 ): NavigationLinks {
   const destCoords = `${targetLat.toFixed(6)},${targetLng.toFixed(6)}`;
   const encodedDest = encodeURIComponent(targetAddress ? `${targetAddress}, Singapore` : destCoords);
 
+  const isDrive = travelMode === 'driving';
+  const gTravelMode = isDrive ? 'driving' : 'walking';
+  const gDirMode = isDrive ? 'driving' : 'walking';
+  const gAppMode = isDrive ? 'd' : 'w';
+  const aDirFlg = isDrive ? 'd' : 'w';
+
   // Google Maps: Universal link, Android intent, and iOS native scheme
-  let gWeb = `https://www.google.com/maps/dir/?api=1&destination=${destCoords}&travelmode=walking`;
-  let gIOS = `comgooglemaps://?daddr=${destCoords}&directionsmode=walking`;
+  let gWeb = `https://www.google.com/maps/dir/?api=1&destination=${destCoords}&travelmode=${gTravelMode}`;
+  let gIOS = `comgooglemaps://?daddr=${destCoords}&directionsmode=${gDirMode}`;
   if (userLat && userLng) {
     const originCoords = `${userLat.toFixed(6)},${userLng.toFixed(6)}`;
     gWeb += `&origin=${originCoords}`;
     gIOS += `&saddr=${originCoords}`;
   }
-  const gApp = `google.navigation:q=${destCoords}&mode=w`;
+  const gApp = `google.navigation:q=${destCoords}&mode=${gAppMode}`;
 
   // Waze: Universal link & App link
   const wWeb = `https://waze.com/ul?ll=${destCoords}&navigate=yes`;
@@ -159,8 +172,8 @@ export function getNavigationLinks(
 
   // Apple Maps: Universal link & App scheme
   // dirflg=w means walking directions, dirflg=d means driving
-  const aWeb = `https://maps.apple.com/?daddr=${destCoords}&dirflg=w`;
-  const aApp = `maps://?daddr=${destCoords}&dirflg=w`;
+  const aWeb = `https://maps.apple.com/?daddr=${destCoords}&dirflg=${aDirFlg}`;
+  const aApp = `maps://?daddr=${destCoords}&dirflg=${aDirFlg}`;
 
   return {
     googleMapsWeb: gWeb,

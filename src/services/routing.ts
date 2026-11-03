@@ -1,15 +1,18 @@
-// Walking Routing Service using Singapore SLA OneMap (routetype=walk)
-// Connects via serverless edge proxy with automated 72-hour token renewal.
-// Zero manual token setup required by end users!
+// Routing Service supporting Singapore SLA OneMap (Walking) & OSRM (Driving & Fallback)
+// - Walking (default): Queries SLA OneMap pedestrian API via Cloudflare Worker proxy, fallback to OSRM walking
+// - Driving: Queries OpenStreetMap OSRM driving engine
 
-export interface WalkingRouteResult {
+export type TravelMode = 'walking' | 'driving';
+
+export interface RouteResult {
   coordinates: [number, number][]; // [lat, lng] array formatted for Leaflet polylines
   distanceMeters: number;
   durationSeconds: number;
-  provider?: 'onemap' | 'osrm' | 'fallback';
+  provider: 'onemap' | 'osrm' | 'fallback';
+  mode: TravelMode;
 }
 
-const routeCache = new Map<string, WalkingRouteResult>();
+const routeCache = new Map<string, RouteResult>();
 
 // Default to Cloudflare Edge Proxy which auto-renews OneMap tokens
 const DEFAULT_PROXY = 'https://bcrs-finder-proxy.kester-neo.workers.dev';
@@ -85,26 +88,19 @@ if (typeof window !== 'undefined') {
 }
 
 /**
- * Fetches the walking route between two coordinates in Singapore.
- * 1. Primary: Serverless Edge Proxy (automated OneMap token renewal, zero hassle for users)
- * 2. Secondary: Direct OneMap if manual token is present
- * 3. Fallback: OpenStreetMap OSRM pedestrian engine
+ * Queries the official SLA OneMap pedestrian walking route API
+ * via Cloudflare Worker proxy (or direct if token is available).
  */
-export async function fetchWalkingRoute(
+async function fetchOneMapWalkingRoute(
   startLat: number,
   startLng: number,
   endLat: number,
   endLng: number
-): Promise<WalkingRouteResult> {
-  const cacheKey = `${startLat.toFixed(5)},${startLng.toFixed(5)}_${endLat.toFixed(5)},${endLng.toFixed(5)}`;
-  if (routeCache.has(cacheKey)) {
-    return routeCache.get(cacheKey)!;
-  }
-
+): Promise<RouteResult | null> {
   const startCoord = `${startLat.toFixed(6)},${startLng.toFixed(6)}`;
   const endCoord = `${endLat.toFixed(6)},${endLng.toFixed(6)}`;
 
-  // 1. Primary: Query Cloudflare Worker Proxy (Automated OneMap token renewal)
+  // 1. Query Cloudflare Edge Proxy (automated OneMap token renewal)
   try {
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), 6000);
@@ -122,26 +118,21 @@ export async function fetchWalkingRoute(
       if (geom && typeof geom === 'string') {
         const decoded = decodePolyline(geom);
         if (decoded.length > 0) {
-          const result: WalkingRouteResult = {
+          return {
             coordinates: decoded,
             distanceMeters: Math.round(data?.route_summary?.total_distance || 0),
             durationSeconds: Math.round(data?.route_summary?.total_time || 0),
             provider: 'onemap',
+            mode: 'walking',
           };
-          if (routeCache.size > 100) {
-            const firstKey = routeCache.keys().next().value;
-            if (firstKey) routeCache.delete(firstKey);
-          }
-          routeCache.set(cacheKey, result);
-          return result;
         }
       }
     }
   } catch (err: any) {
-    console.info('Proxy OneMap route lookup skipped, trying local or OSRM:', err?.message);
+    console.info('Proxy OneMap route lookup failed, attempting direct/fallback:', err?.message);
   }
 
-  // 2. Secondary: Direct OneMap API call if manual token was configured
+  // 2. Direct OneMap call if manual token is stored locally
   const localToken = getOnemapToken();
   if (localToken) {
     try {
@@ -158,24 +149,41 @@ export async function fetchWalkingRoute(
         if (geom && typeof geom === 'string') {
           const decoded = decodePolyline(geom);
           if (decoded.length > 0) {
-            const result: WalkingRouteResult = {
+            return {
               coordinates: decoded,
               distanceMeters: Math.round(data?.route_summary?.total_distance || 0),
               durationSeconds: Math.round(data?.route_summary?.total_time || 0),
               provider: 'onemap',
+              mode: 'walking',
             };
-            routeCache.set(cacheKey, result);
-            return result;
           }
         }
       }
     } catch (_) {}
   }
 
-  // 3. Fallback: OpenStreetMap OSRM pedestrian routing
+  return null;
+}
+
+/**
+ * Queries OpenStreetMap OSRM routing engine (walking or driving)
+ */
+async function fetchOSRMRoute(
+  startLat: number,
+  startLng: number,
+  endLat: number,
+  endLng: number,
+  mode: TravelMode
+): Promise<RouteResult | null> {
+  const profile = mode === 'driving' ? 'driving' : 'walking';
+  const osrmUrl = `https://router.project-osrm.org/route/v1/${profile}/${startLng},${startLat};${endLng},${endLat}?overview=full&geometries=geojson`;
+
   try {
-    const osrmUrl = `https://router.project-osrm.org/route/v1/walking/${startLng},${startLat};${endLng},${endLat}?overview=full&geometries=geojson`;
-    const res = await fetch(osrmUrl);
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 6000);
+    const res = await fetch(osrmUrl, { signal: controller.signal });
+    clearTimeout(timeoutId);
+
     if (res.ok) {
       const data = await res.json();
       if (data?.code === 'Ok' && Array.isArray(data?.routes) && data.routes.length > 0) {
@@ -183,20 +191,75 @@ export async function fetchWalkingRoute(
         const rawCoords: [number, number][] = primary.geometry.coordinates;
         const latLngs: [number, number][] = rawCoords.map(([lng, lat]) => [lat, lng]);
 
-        const result: WalkingRouteResult = {
+        return {
           coordinates: latLngs,
           distanceMeters: Math.round(primary.distance || 0),
           durationSeconds: Math.round(primary.duration || 0),
           provider: 'osrm',
+          mode,
         };
-        routeCache.set(cacheKey, result);
-        return result;
       }
     }
-  } catch (_) {}
+  } catch (err: any) {
+    console.info(`OSRM ${mode} lookup failed:`, err?.message);
+  }
+  return null;
+}
 
-  // 4. Final Fallback: Direct straight dotted line
-  return {
+/**
+ * Unified route fetcher:
+ * - Default (Walking): OneMap API primary, OSRM walking fallback
+ * - Driving: OSRM driving engine
+ */
+export async function fetchRoute(
+  startLat: number,
+  startLng: number,
+  endLat: number,
+  endLng: number,
+  mode: TravelMode = 'walking'
+): Promise<RouteResult> {
+  const cacheKey = `${mode}_${startLat.toFixed(5)},${startLng.toFixed(5)}_${endLat.toFixed(5)},${endLng.toFixed(5)}`;
+  if (routeCache.has(cacheKey)) {
+    return routeCache.get(cacheKey)!;
+  }
+
+  // 1. If Driving mode: use OSRM driving routing
+  if (mode === 'driving') {
+    const osrmDrive = await fetchOSRMRoute(startLat, startLng, endLat, endLng, 'driving');
+    if (osrmDrive) {
+      if (routeCache.size > 100) {
+        const firstKey = routeCache.keys().next().value;
+        if (firstKey) routeCache.delete(firstKey);
+      }
+      routeCache.set(cacheKey, osrmDrive);
+      return osrmDrive;
+    }
+  } else {
+    // 2. If Walking mode: Default OneMap API
+    const onemapWalk = await fetchOneMapWalkingRoute(startLat, startLng, endLat, endLng);
+    if (onemapWalk) {
+      if (routeCache.size > 100) {
+        const firstKey = routeCache.keys().next().value;
+        if (firstKey) routeCache.delete(firstKey);
+      }
+      routeCache.set(cacheKey, onemapWalk);
+      return onemapWalk;
+    }
+
+    // Fallback: OSRM walking
+    const osrmWalk = await fetchOSRMRoute(startLat, startLng, endLat, endLng, 'walking');
+    if (osrmWalk) {
+      if (routeCache.size > 100) {
+        const firstKey = routeCache.keys().next().value;
+        if (firstKey) routeCache.delete(firstKey);
+      }
+      routeCache.set(cacheKey, osrmWalk);
+      return osrmWalk;
+    }
+  }
+
+  // 3. Final Fallback: Direct straight dotted line
+  const fallbackResult: RouteResult = {
     coordinates: [
       [startLat, startLng],
       [endLat, endLng],
@@ -204,5 +267,11 @@ export async function fetchWalkingRoute(
     distanceMeters: 0,
     durationSeconds: 0,
     provider: 'fallback',
+    mode,
   };
+  return fallbackResult;
 }
+
+// Backward compatibility aliases
+export const fetchWalkingRoute = fetchRoute;
+export type WalkingRouteResult = RouteResult;

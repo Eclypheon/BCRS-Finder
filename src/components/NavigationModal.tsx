@@ -3,11 +3,13 @@ import { RVM, UserLocation } from '../types/rvm';
 import {
   formatDistance,
   estimateWalkMinutes,
+  estimateDriveMinutes,
   getMachineStatusInfo,
   getNavigationLinks,
   launchNavigation,
   formatSingaporeDateTime,
 } from '../utils/geo';
+import { TravelMode } from '../services/routing';
 import {
   X,
   Navigation,
@@ -20,26 +22,34 @@ import {
   ExternalLink,
   Gauge,
   Footprints,
+  Car,
 } from 'lucide-react';
 
 interface NavigationModalProps {
   rvm: RVM | null;
   userLocation: UserLocation | null;
+  travelMode?: TravelMode;
+  onTravelModeChange?: (mode: TravelMode) => void;
   onClose: () => void;
 }
 
 export const NavigationModal: React.FC<NavigationModalProps> = ({
   rvm,
   userLocation,
+  travelMode = 'walking',
+  onTravelModeChange,
   onClose,
 }) => {
   const [copied, setCopied] = useState(false);
 
   if (!rvm) return null;
 
+  const isDrive = travelMode === 'driving';
   const statusInfo = getMachineStatusInfo(rvm);
   const distanceStr = formatDistance(rvm.distanceMeters);
-  const walkMinutes = estimateWalkMinutes(rvm.distanceMeters);
+  const estMinutes = isDrive
+    ? estimateDriveMinutes(rvm.distanceMeters)
+    : estimateWalkMinutes(rvm.distanceMeters);
   const fillPct =
     typeof rvm.binFillPct === 'number'
       ? rvm.binFillPct
@@ -57,7 +67,8 @@ export const NavigationModal: React.FC<NavigationModalProps> = ({
     rvm.longitude,
     rvm.address || rvm.locationName,
     userLocation?.latitude,
-    userLocation?.longitude
+    userLocation?.longitude,
+    travelMode
   );
 
   const handleCopyAddress = async () => {
@@ -160,7 +171,38 @@ export const NavigationModal: React.FC<NavigationModalProps> = ({
               </div>
             </div>
 
-            {/* Quick Metrics (Distance & Walk Time) */}
+            {/* Travel Mode Toggle */}
+            <div className="flex items-center justify-between p-2.5 rounded-xl bg-slate-900/60 border border-slate-800">
+              <span className="text-xs text-slate-300 font-medium">Navigation Mode</span>
+              <div className="flex items-center bg-slate-800 rounded-lg p-0.5 border border-slate-700/60">
+                <button
+                  type="button"
+                  onClick={() => onTravelModeChange?.('walking')}
+                  className={`flex items-center gap-1 px-2.5 py-1 rounded-md text-xs font-bold transition-all cursor-pointer ${
+                    !isDrive
+                      ? 'bg-sky-500 text-white shadow'
+                      : 'text-slate-400 hover:text-slate-200'
+                  }`}
+                >
+                  <Footprints className="w-3.5 h-3.5" />
+                  <span>Walking</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => onTravelModeChange?.('driving')}
+                  className={`flex items-center gap-1 px-2.5 py-1 rounded-md text-xs font-bold transition-all cursor-pointer ${
+                    isDrive
+                      ? 'bg-blue-600 text-white shadow'
+                      : 'text-slate-400 hover:text-slate-200'
+                  }`}
+                >
+                  <Car className="w-3.5 h-3.5" />
+                  <span>Driving</span>
+                </button>
+              </div>
+            </div>
+
+            {/* Quick Metrics (Distance & Estimated Time) */}
             <div className="grid grid-cols-2 gap-2 pt-2 border-t border-slate-700/60 text-center">
               <div className="p-2 rounded-xl bg-slate-900/60 border border-slate-800">
                 <div className="text-[11px] text-slate-400">Distance</div>
@@ -168,9 +210,17 @@ export const NavigationModal: React.FC<NavigationModalProps> = ({
               </div>
               <div className="p-2 rounded-xl bg-slate-900/60 border border-slate-800">
                 <div className="text-[11px] text-slate-400 flex items-center justify-center gap-1">
-                  <Footprints className="w-3 h-3 text-slate-400" /> Walking Time
+                  {isDrive ? (
+                    <>
+                      <Car className="w-3 h-3 text-blue-400" /> Driving Time
+                    </>
+                  ) : (
+                    <>
+                      <Footprints className="w-3 h-3 text-slate-400" /> Walking Time
+                    </>
+                  )}
                 </div>
-                <div className="text-sm font-bold text-slate-200">~{walkMinutes} mins</div>
+                <div className="text-sm font-bold text-slate-200">~{estMinutes} mins</div>
               </div>
             </div>
 
@@ -277,7 +327,9 @@ export const NavigationModal: React.FC<NavigationModalProps> = ({
                       Google Maps
                     </div>
                     <div className="text-xs text-slate-400">
-                      Walking & transit directions, live turn-by-turn
+                      {isDrive
+                        ? 'Turn-by-turn driving navigation & traffic'
+                        : 'Walking & transit directions, live turn-by-turn'}
                     </div>
                   </div>
                 </div>
@@ -339,7 +391,9 @@ export const NavigationModal: React.FC<NavigationModalProps> = ({
                       Apple Maps
                     </div>
                     <div className="text-xs text-slate-400">
-                      Native directions on iPhone, iPad, Mac
+                      {isDrive
+                        ? 'Native driving directions on iOS & macOS'
+                        : 'Native walking directions on iOS & macOS'}
                     </div>
                   </div>
                 </div>
